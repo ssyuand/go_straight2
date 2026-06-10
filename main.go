@@ -12,13 +12,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
 
-// Config 設定結構體
+// Config 設定結構體（映射 config.json 欄位）
 type Config struct {
 	TargetURLs     []string `json:"target_urls"`
 	WebPort        int      `json:"web_port"`
@@ -28,7 +29,7 @@ type Config struct {
 	ProbeSleepDeep int      `json:"probe_sleep_deep"`
 }
 
-// StreamState 頻道專屬的隔離狀態
+// StreamState 頻道專屬的隔離狀態與核心鎖控
 type StreamState struct {
 	mu           sync.Mutex
 	TargetURL    string
@@ -42,7 +43,7 @@ type StreamState struct {
 	LatestMTime  string
 	RecordCtx    context.Context
 	RecordCancel context.CancelFunc
-	ReloadChan   chan struct{} // 👈 新增：熱載入即時驚醒訊號通道
+	ReloadChan   chan struct{}
 }
 
 type StreamStateSnapshot struct {
@@ -88,6 +89,9 @@ type App struct {
 }
 
 func main() {
+	numCPU := runtime.NumCPU()
+	runtime.GOMAXPROCS(numCPU * 2)
+
 	confFile, err := os.ReadFile("config.json")
 	if err != nil {
 		log.Fatalf("[ERROR] 無法讀取 config.json: %v", err)
@@ -105,6 +109,27 @@ func main() {
 			return
 		case "stop", "shutdown":
 			terminateService(config.WebPort)
+			return
+		case "restart":
+			fmt.Printf("🔄 正在停止舊的核心服務與錄影管線...\n")
+			terminateService(config.WebPort)
+			time.Sleep(1 * time.Second) 
+
+			fmt.Printf("🚀 正在重新啟動服務...\n")
+			logFile, err := os.OpenFile("livetool.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+			if err != nil {
+				log.Fatalf("[ERROR] 無法建立日誌檔案: %v", err)
+			}
+			cmd := exec.Command(os.Args[0], "start")
+			cmd.Env = append(os.Environ(), "LIVETOOL_DAEMON=1")
+			cmd.Stdout = logFile
+			cmd.Stderr = logFile
+
+			if err := cmd.Start(); err != nil {
+				log.Fatalf("[ERROR] 自動切換至背景運行失敗: %v", err)
+			}
+			fmt.Printf("\x1b[32m[LAUNCH] 🚀 go_straight 多核心併發雷達已成功重啟並運行於背景！\x1b[0m\n")
+			fmt.Printf("📊 總控儀表板 -> http://localhost:%d\n", config.WebPort)
 			return
 		case "start":
 			if os.Getenv("LIVETOOL_DAEMON") != "1" {
@@ -125,13 +150,18 @@ func main() {
 				return
 			}
 		default:
-			fmt.Printf("未知參數: %s\n可用指令:\n  ./livetool start\n  ./livetool status\n  ./livetool stop\n", action)
+			fmt.Printf("未知參數: %s\n可用指令:\n  ./livetool start\n  ./livetool status\n  ./livetool stop\n  ./livetool restart\n", action)
 			return
 		}
 	} else {
 		fmt.Printf("提示: 請使用 ./livetool start 啟動服務。\n")
 		return
 	}
+
+	// 配置全域 Log 輸出格式
+	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds)
+	log.Println("[SYSTEM] =========================================================")
+	log.Println("[SYSTEM] 🚀 go_straight 多核心併發雷達核心啟動中...")
 
 	cwd, _ := os.Getwd()
 	baseSaveDir := filepath.Join(cwd, "downloads")
@@ -157,13 +187,15 @@ func main() {
 			Prefix:      prefix,
 			SaveDir:     saveDir,
 			ProbeStatus: "⚪ 哨兵初始化，待命中...",
-			ReloadChan:  make(chan struct{}, 1), // 👈 初始化驚醒通道
+			ReloadChan:  make(chan struct{}, 1), 
 		}
 		app.Streams[prefix] = stream
+		log.Printf("[SYSTEM] 📡 成功載入目標雷達守備對象: @%s (儲存路徑: %s)", prefix, saveDir)
 	}
 
 	if fi, err := os.Stat(filepath.Join(cwd, "venv", "bin")); err == nil && fi.IsDir() {
 		os.Setenv("PATH", filepath.Join(cwd, "venv", "bin")+":"+os.Getenv("PATH"))
+		log.Println("[SYSTEM] 🐍 偵測到本地 Python venv，已成功併入 PATH 環境變數。")
 	}
 
 	app.updateDiskStatus()
@@ -179,6 +211,9 @@ func main() {
 	http.HandleFunc("/api/status", app.handleAPIStatus)
 	http.HandleFunc("/api/shutdown", app.handleAPIShutdown)
 	http.HandleFunc("/api/probe", app.handleAPIProbe)
+	http.HandleFunc("/api/restart", app.handleAPIRestart) 
+	http.HandleFunc("/api/restart_cluster", app.handleAPIRegionalRestart) 
+	http.HandleFunc("/api/logs", app.handleAPILogs) 
 
 	addr := fmt.Sprintf(":%d", app.Config.WebPort)
 	log.Printf("=========================================================")
@@ -190,7 +225,6 @@ func main() {
 	}
 }
 
-// 👈 核心熱載入優化：改動設定檔時，主動發射驚醒訊號
 func (a *App) configWatcher() {
 	var lastMod time.Time
 	confPath := "config.json"
@@ -212,28 +246,23 @@ func (a *App) configWatcher() {
 						a.Config.ProbeSleepDeep = newCfg.ProbeSleepDeep
 						a.configMu.Unlock()
 
-						log.Printf("[CONFIG] 🔄 設定檔已熱載入！(Interval: %ds, SleepDeep: %ds, Window: %s~%s)",
-							newCfg.ProbeInterval, newCfg.ProbeSleepDeep, newCfg.ProbeStart, newCfg.ProbeEnd)
+						log.Printf("[CONFIG] 🔄 設定檔已熱載入！警戒時段變更為: %s ~ %s (Interval: %ds, SleepDeep: %ds)", newCfg.ProbeStart, newCfg.ProbeEnd, newCfg.ProbeInterval, newCfg.ProbeSleepDeep)
 
-						// 👈 重點：通知所有還在睡覺的頻道執行緒「立刻起床重算時間」
 						a.StreamsMu.RLock()
 						for _, s := range a.Streams {
 							select {
-							case s.ReloadChan <- struct{}{}:
+							case s.ReloadChan <- struct{}{}: 
 							default:
-								// 如果通道滿了就跳過，避免阻塞
 							}
 						}
 						a.StreamsMu.RUnlock()
 
 						lastMod = fi.ModTime()
-					} else {
-						log.Println("[CONFIG] ❌ 設定檔 JSON 格式解析失敗，忽略此次改動。")
 					}
 				}
 			}
 		}
-		time.Sleep(5 * time.Second) // 縮短為 5 秒巡邏一次設定檔
+		time.Sleep(5 * time.Second)
 	}
 }
 
@@ -279,7 +308,7 @@ func (a *App) checkTimeWindowSafe() (bool, time.Duration) {
 
 func (a *App) templateProbeRadar(s *StreamState) {
 	for {
-	RE_LOOP: // 👈 完美修正：把重設錨點拉到最上面，確保驚醒後絕對重新計算時間
+	RE_LOOP: 
 		s.mu.Lock()
 		isRec := s.IsRecording
 		isProb := s.IsProbing
@@ -296,7 +325,6 @@ func (a *App) templateProbeRadar(s *StreamState) {
 			continue
 		}
 
-		// 每次重算時間前，乾淨排空可能殘留的舊 Reload 訊號
 		select {
 		case <-s.ReloadChan:
 		default:
@@ -311,19 +339,19 @@ func (a *App) templateProbeRadar(s *StreamState) {
 				totalSleepSec = probeSleepDeep
 			}
 			
+			log.Printf("[RADAR] [@%s] 當前非戰備時段。雷達將進入深度休眠 %d 秒。", s.Prefix, totalSleepSec)
 			for i := totalSleepSec; i > 0; i-- {
 				s.mu.Lock()
 				if s.IsRecording || s.IsProbing {
 					s.mu.Unlock()
-					break // 如果被手動刺探打斷，退出計時，下一輪會因為 isProb 進入讓路模式
+					break 
 				}
 				s.mu.Unlock()
 
-				// 監聽熱載入變更通知
 				select {
 				case <-s.ReloadChan:
 					log.Printf("[RADAR] [@%s] 收到排程熱載入變更通知！立刻打破長休眠重新計算。", s.Prefix)
-					goto RE_LOOP // 驚醒！直接跳到最上方重新對齊新時間
+					goto RE_LOOP 
 				default:
 				}
 
@@ -335,11 +363,14 @@ func (a *App) templateProbeRadar(s *StreamState) {
 		}
 
 		a.updateProbeStatus(s, "🟣 發送網路請求中 (檢測開播狀態...)")
+		log.Printf("[RADAR] [@%s] 警戒戰備期間，啟動常規流狀態刺探...", s.Prefix)
 		
-		if a.checkLiveStatus(s.TargetURL) {
+		if a.checkLiveStatusAndLog(s.Prefix, s.TargetURL) {
+			log.Printf("[RADAR] [@%s] 🎯 命中！確認主播已開播，準備移交錄影核心管線。", s.Prefix)
 			a.startRecordingWrapper(s)
 		} else {
 			waitTime := probeInterval + rand.Intn(21)
+			log.Printf("[RADAR] [@%s] 🔎 刺探結果：尚未開播。隨機冷卻下一次檢測： %d 秒後。", s.Prefix, waitTime)
 			for i := waitTime; i > 0; i-- {
 				s.mu.Lock()
 				if s.IsRecording || s.IsProbing {
@@ -348,7 +379,6 @@ func (a *App) templateProbeRadar(s *StreamState) {
 				}
 				s.mu.Unlock()
 
-				// 戰備短暫倒數期間，若改設定同樣立刻打斷
 				select {
 				case <-s.ReloadChan:
 					log.Printf("[RADAR] [@%s] 戰備期間收到排程熱變更，重新對齊。", s.Prefix)
@@ -378,16 +408,18 @@ func (a *App) startRecordingWrapper(s *StreamState) {
 
 		select {
 		case <-ctx.Done():
+			log.Printf("[PROBE] [@%s] 錄影 Context 收到終止訊號，正式登出管線。", s.Prefix)
 			goto END_RECORD
 		default:
 			a.updateProbeStatus(s, "🟡 管線意外斷開，2秒後確認是否為微斷流...")
+			log.Printf("[PROBE] ⚠️ [@%s] 錄影管線意外中斷！正在等待 2 秒進行斷流判定...", s.Prefix)
 			time.Sleep(2 * time.Second)
 
-			if a.checkLiveStatus(s.TargetURL) {
-				log.Printf("[PROBE] 🔄 偵測到主播 @%s 仍在線 (微斷流)，雷達立即接回重錄！", s.Prefix)
+			if a.checkLiveStatusAndLog(s.Prefix, s.TargetURL) {
+				log.Printf("[PROBE] 🔄 偵測到主播 @%s 仍在線 (確認為微斷流)，雷達立即接回重錄！", s.Prefix)
 				continue
 			} else {
-				log.Printf("[PROBE] 🎬 主播 @%s 已下播，結束錄影任務。", s.Prefix)
+				log.Printf("[PROBE] 🎬 主播 @%s 已確認下播，正式結束本次錄影任務。", s.Prefix)
 				goto END_RECORD
 			}
 		}
@@ -400,16 +432,17 @@ END_RECORD:
 		s.RecordCancel()
 	}
 	s.mu.Unlock()
+	log.Printf("[PROBE] [@%s] 釋放鎖控，進入 10 秒緩衝期防止極端高頻迴圈。", s.Prefix)
 	time.Sleep(10 * time.Second)
 }
 
 func (a *App) runRecordEngine(ctx context.Context, s *StreamState) {
 	tsFile := filepath.Join(s.SaveDir, time.Now().Format("20060102-150405")+".ts")
-	log.Printf("[CORE] [@%s] 錄影開始: %s", s.Prefix, filepath.Base(tsFile))
+	log.Printf("[CORE] [@%s] 錄影核心管線建立成功，輸出路徑: %s", s.Prefix, filepath.Base(tsFile))
 
 	startTime := time.Now()
 
-	streamlinkCmd := exec.CommandContext(ctx, "taskset", "-c", "0", "ionice", "-c", "2", "-n", "0",
+	streamlinkCmd := exec.CommandContext(ctx, "ionice", "-c", "2", "-n", "0",
 		"streamlink", s.TargetURL, "hd,ld,best",
 		"--loglevel", "warning",
 		"--ringbuffer-size", "512M",
@@ -421,8 +454,8 @@ func (a *App) runRecordEngine(ctx context.Context, s *StreamState) {
 		"-O",
 	)
 
-	ffmpegCmd := exec.CommandContext(ctx, "taskset", "-c", "0", "ionice", "-c", "2", "-n", "0",
-		"ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", "pipe:0", "-c", "copy", "-f", "mpegts", tsFile,
+	ffmpegCmd := exec.CommandContext(ctx, "ionice", "-c", "2", "-n", "0",
+		"ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-thread_queue_size", "1024", "-i", "pipe:0", "-c", "copy", "-f", "mpegts", tsFile,
 	)
 
 	streamlinkCmd.Env = append(os.Environ(), "LD_PRELOAD=/usr/lib/libjemalloc.so")
@@ -449,6 +482,8 @@ func (a *App) runRecordEngine(ctx context.Context, s *StreamState) {
 		return
 	}
 
+	log.Printf("[CORE] [@%s] Streamlink (PID: %d) & FFmpeg (PID: %d) 聯動推進中...", s.Prefix, streamlinkCmd.Process.Pid, ffmpegCmd.Process.Pid)
+
 	go func() {
 		for {
 			select {
@@ -474,10 +509,10 @@ func (a *App) runRecordEngine(ctx context.Context, s *StreamState) {
 
 	select {
 	case <-ctx.Done():
-		log.Printf("[CORE] [@%s] 錄影收到中斷指令，已主動停止。時長: %d 秒", s.Prefix, int(lifespan.Seconds()))
+		log.Printf("[CORE] [@%s] 錄影收到使用者/系統中斷指令，已主動熔斷管線。時長: %d 秒", s.Prefix, int(lifespan.Seconds()))
 	default:
 		if errStreamlink != nil || errFfmpeg != nil {
-			log.Printf("[ALARM] ⚠️ [@%s] 管線異常中斷！產生診斷報告...", s.Prefix)
+			log.Printf("[ALARM] ⚠️ [@%s] 管線異常崩潰！正在生成深度診斷報告...", s.Prefix)
 			if errStreamlink != nil && streamlinkStderr.Len() > 0 {
 				log.Printf("[DIAGNOSIS] streamlink 遺言:\n%s", strings.TrimSpace(streamlinkStderr.String()))
 			}
@@ -490,9 +525,9 @@ func (a *App) runRecordEngine(ctx context.Context, s *StreamState) {
 	fi, err := os.Stat(tsFile)
 	if err != nil || fi.Size() == 0 || lifespan < 5*time.Second {
 		_ = os.Remove(tsFile)
-		log.Printf("[CORE] [@%s] 移除垃圾碎片 (%d 秒)。", s.Prefix, int(lifespan.Seconds()))
+		log.Printf("[CORE] [@%s] 錄影時間過短 (%d 秒) 或無有效數據，已自動回收垃圾無效碎片檔案。", s.Prefix, int(lifespan.Seconds()))
 	} else {
-		log.Printf("[CORE] [@%s] 碎片儲存成功 (%d 秒)。", s.Prefix, int(lifespan.Seconds()))
+		log.Printf("[CORE] [@%s] 串流儲存封存成功。最終檔案大小: %.2f MB, 總耗時: %d 秒。", s.Prefix, float64(fi.Size())/(1024*1024), int(lifespan.Seconds()))
 	}
 }
 
@@ -502,14 +537,25 @@ func (a *App) updateProbeStatus(s *StreamState, status string) {
 	s.mu.Unlock()
 }
 
-func (a *App) checkLiveStatus(targetURL string) bool {
+// 核心升級：捕獲 CLI 完整輸出並無漏寫入 log
+func (a *App) checkLiveStatusAndLog(prefix string, targetURL string) bool {
 	cmd := exec.Command("streamlink", "--json", targetURL)
-	output, err := cmd.Output()
+	
+	// 同步捕捉標準輸出與標準錯誤
+	output, err := cmd.CombinedOutput()
+	trimmedOutput := strings.TrimSpace(string(output))
+	
+	log.Printf("[CLI-PROBE] [@%s] 執行指令: streamlink --json %s", prefix, targetURL)
+	log.Printf("[CLI-OUTPUT] [@%s] 完整 CLI 輸出如下:\n%s\n----------------------------------------", prefix, trimmedOutput)
+
 	if err != nil {
+		// 指令執行報錯（非 0 狀態碼通常代表未開播或網路錯誤）
 		return false
 	}
+
 	var res StreamlinkResponse
 	if err := json.Unmarshal(output, &res); err != nil {
+		log.Printf("[CLI-PARSE] [@%s] JSON 解析失敗 (可能非預期格式): %v", prefix, err)
 		return false
 	}
 	return len(res.Streams) > 0
@@ -552,15 +598,9 @@ func (a *App) updateSystemResource() {
 				nice, _ = strconv.ParseUint(fields[2], 10, 64)
 				system, _ = strconv.ParseUint(fields[3], 10, 64)
 				idle, _ = strconv.ParseUint(fields[4], 10, 64)
-				if len(fields) > 5 {
-					iowait, _ = strconv.ParseUint(fields[5], 10, 64)
-				}
-				if len(fields) > 6 {
-					irq, _ = strconv.ParseUint(fields[6], 10, 64)
-				}
-				if len(fields) > 7 {
-					softirq, _ = strconv.ParseUint(fields[7], 10, 64)
-				}
+				if len(fields) > 5 { iowait, _ = strconv.ParseUint(fields[5], 10, 64) }
+				if len(fields) > 6 { irq, _ = strconv.ParseUint(fields[6], 10, 64) }
+				if len(fields) > 7 { softirq, _ = strconv.ParseUint(fields[7], 10, 64) }
 
 				currentIdle := idle + iowait
 				currentNonIdle := user + nice + system + irq + softirq
@@ -590,15 +630,11 @@ func (a *App) updateSystemResource() {
 		for _, line := range lines {
 			if strings.HasPrefix(line, "MemTotal:") {
 				fields := strings.Fields(line)
-				if len(fields) > 1 {
-					memTotal, _ = strconv.ParseFloat(fields[1], 64)
-				}
+				if len(fields) > 1 { memTotal, _ = strconv.ParseFloat(fields[1], 64) }
 			}
 			if strings.HasPrefix(line, "MemAvailable:") {
 				fields := strings.Fields(line)
-				if len(fields) > 1 {
-					memAvail, _ = strconv.ParseFloat(fields[1], 64)
-				}
+				if len(fields) > 1 { memAvail, _ = strconv.ParseFloat(fields[1], 64) }
 				break
 			}
 		}
@@ -641,7 +677,93 @@ func (a *App) getAPIResponseSnapshot() APIResponse {
 	}
 }
 
+func (a *App) handleAPILogs(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	file, err := os.Open("livetool.log")
+	if err != nil {
+		w.Write([]byte("[ERROR] 無法打開日誌檔案 livetool.log"))
+		return
+	}
+	defer file.Close()
+
+	stat, err := file.Stat()
+	if err != nil {
+		w.Write([]byte("[ERROR] 無法獲取日誌屬性"))
+		return
+	}
+
+	var bufSize int64 = 128 * 1024 // 放大讀取緩衝至 128KB 容納完整的 CLI JSON
+	if stat.Size() < bufSize {
+		bufSize = stat.Size()
+	}
+
+	buf := make([]byte, bufSize)
+	_, err = file.ReadAt(buf, stat.Size()-bufSize)
+	if err != nil {
+		w.Write(buf) 
+		return
+	}
+
+	lines := strings.Split(string(buf), "\n")
+	if len(lines) > 300 { // 增加回傳行數
+		lines = lines[len(lines)-300:]
+	}
+	w.Write([]byte(strings.Join(lines, "\n")))
+}
+
 func (a *App) handleAPIProbe(w http.ResponseWriter, r *http.Request) {
+	prefix := r.URL.Query().Get("prefix")
+	a.StreamsMu.RLock()
+	stream, exists := a.Streams[prefix]
+	a.StreamsMu.RUnlock()
+
+	if !exists {
+		log.Printf("[API] ⚠️ 收到針對不存在頻道 @%s 的手動刺探請求", prefix)
+		http.Error(w, `{"error":"頻道不存在"}`, http.StatusNotFound)
+		return
+	}
+
+	stream.mu.Lock()
+	if stream.IsRecording {
+		stream.mu.Unlock()
+		log.Printf("[API] [@%s] 手動刺探駁回：目前正在錄影中。", prefix)
+		http.Error(w, `{"error":"該頻道正在錄影中，無需刺探"}`, http.StatusBadRequest)
+		return
+	}
+	if stream.IsProbing {
+		stream.mu.Unlock()
+		log.Printf("[API] [@%s] 手動刺探駁回：上次刺探併發鎖尚未釋放。", prefix)
+		http.Error(w, `{"error":"上一次刺探正在進行中，請稍候"}`, http.StatusTooManyRequests)
+		return
+	}
+	stream.IsProbing = true
+	stream.ProbeStatus = "🚀 收到手動指令，雷達全力刺探中..."
+	stream.mu.Unlock()
+
+	log.Printf("[API] ⚡ [手動刺探觸發] 正在為頻道 @%s 調度即時雷達偵測流...", prefix)
+
+	go func(s *StreamState) {
+		isLive := a.checkLiveStatusAndLog(s.Prefix, s.TargetURL)
+
+		s.mu.Lock()
+		s.IsProbing = false 
+		if isLive {
+			log.Printf("[API] [@%s] 🎯 手動刺探命中！主播正處於開播狀態，立刻派遣管線接管！", s.Prefix)
+			s.mu.Unlock()
+			go a.startRecordingWrapper(s)
+		} else {
+			log.Printf("[API] [@%s] ❌ 手動刺探完畢：目標並未開播。", s.Prefix)
+			s.ProbeStatus = "❌ 手動刺探：主播未開播"
+			s.mu.Unlock()
+			time.Sleep(6 * time.Second)
+		}
+	}(stream)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(`{"status":"triggered"}`))
+}
+
+func (a *App) handleAPIRestart(w http.ResponseWriter, r *http.Request) {
 	prefix := r.URL.Query().Get("prefix")
 	a.StreamsMu.RLock()
 	stream, exists := a.Streams[prefix]
@@ -653,49 +775,82 @@ func (a *App) handleAPIProbe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	stream.mu.Lock()
-	if stream.IsRecording {
+	if !stream.IsRecording {
 		stream.mu.Unlock()
-		http.Error(w, `{"error":"該頻道正在錄影中，無需刺探"}`, http.StatusBadRequest)
+		http.Error(w, `{"error":"該頻道目前未在錄影中，無法重啟"}`, http.StatusBadRequest)
 		return
 	}
-	if stream.IsProbing {
-		stream.mu.Unlock()
-		http.Error(w, `{"error":"上一次刺探正在進行中，請稍候"}`, http.StatusTooManyRequests)
-		return
+
+	log.Printf("[API] 🔄 收到網頁端要求強制中斷並重啟頻道 @%s 錄影之指令", prefix)
+	stream.ProbeStatus = "🔄 正在執行強制重啟..."
+	if stream.RecordCancel != nil {
+		stream.RecordCancel() 
 	}
-	stream.IsProbing = true
-	stream.ProbeStatus = "🚀 收到手動指令，雷達全力刺探中..."
 	stream.mu.Unlock()
 
-	go func(s *StreamState) {
-		isLive := a.checkLiveStatus(s.TargetURL)
-
-		s.mu.Lock()
-		s.IsProbing = false 
-		if isLive {
-			s.mu.Unlock()
-			go a.startRecordingWrapper(s)
-		} else {
-			s.ProbeStatus = "❌ 手動刺探：主播未開播"
-			s.mu.Unlock()
-			time.Sleep(6 * time.Second)
-		}
-	}(stream)
+	select {
+	case stream.ReloadChan <- struct{}{}:
+	default:
+	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte(`{"status":"triggered"}`))
+	w.Write([]byte(`{"status":"restarting"}`))
+}
+
+func (a *App) handleAPIRegionalRestart(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(`{"status":"cluster_restarting"}`))
+	log.Println("[SYSTEM] 🌐 收到網頁端全艦重啟指令，正在熔斷所有錄影管線並準備重構核心...")
+
+	a.StreamsMu.Lock()
+	for _, s := range a.Streams {
+		s.mu.Lock()
+		if s.RecordCancel != nil {
+			s.RecordCancel()
+		}
+		s.mu.Unlock()
+	}
+	a.StreamsMu.Unlock()
+
+	_ = exec.Command("pkill", "-f", "streamlink").Run()
+	_ = exec.Command("pkill", "-f", "ffmpeg").Run()
+
+	go func() {
+		time.Sleep(1000 * time.Millisecond)
+
+		execPath, err := os.Executable()
+		if err != nil {
+			execPath = os.Args[0]
+		}
+
+		logFile, err := os.OpenFile("livetool.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+		if err != nil {
+			os.Exit(1)
+		}
+
+		cmd := exec.Command("sh", "-c", fmt.Sprintf("%s start", execPath))
+		cmd.Env = append(os.Environ(), "LIVETOOL_DAEMON=1")
+		cmd.Stdout = logFile
+		cmd.Stderr = logFile
+		cwd, _ := os.Getwd()
+		cmd.Dir = cwd
+
+		if err := cmd.Start(); err != nil {
+			log.Printf("[ERROR] 網頁熱重啟派生新核心失敗: %v", err)
+			os.Exit(1)
+		}
+
+		log.Println("[SYSTEM] 🚀 新核心已成功在背景更迭，舊主程式安全退出。")
+		os.Exit(0)
+	}()
 }
 
 func (a *App) handleAPIStatus(w http.ResponseWriter, r *http.Request) {
 	a.updateDiskStatus()
 	a.updateSystemResource()
-
 	resp := a.getAPIResponseSnapshot()
-
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		log.Printf("[ERROR] API 狀態編碼失敗: %v", err)
-	}
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 func (a *App) handleAPIShutdown(w http.ResponseWriter, r *http.Request) {
@@ -706,9 +861,7 @@ func (a *App) handleAPIShutdown(w http.ResponseWriter, r *http.Request) {
 	a.StreamsMu.Lock()
 	for _, s := range a.Streams {
 		s.mu.Lock()
-		if s.RecordCancel != nil {
-			s.RecordCancel()
-		}
+		if s.RecordCancel != nil { s.RecordCancel() }
 		s.mu.Unlock()
 	}
 	a.StreamsMu.Unlock()
@@ -738,12 +891,10 @@ type PageData struct {
 }
 
 func (a *App) handleIndex(w http.ResponseWriter, r *http.Request) {
-	// 1. 處理下載請求 (Path Traversal 防護)
 	if strings.HasPrefix(r.URL.Path, "/download/") {
 		requestedPath := strings.TrimPrefix(r.URL.Path, "/download/")
 		fullPath := filepath.Join(a.BaseSaveDir, requestedPath)
 
-		// 檢查路徑是否安全
 		rel, err := filepath.Rel(a.BaseSaveDir, fullPath)
 		if err != nil || strings.HasPrefix(rel, "..") || rel == ".." {
 			log.Printf("[SECURITY] 🚨 偵測到非法路徑訪問: %s", r.RemoteAddr)
@@ -755,20 +906,15 @@ func (a *App) handleIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 2. 獲取系統快照
 	resp := a.getAPIResponseSnapshot()
 
-	// 3. 掃描下載目錄中的檔案列表
 	var allFiles []FileRow
-	filepath.Walk(a.BaseSaveDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return nil
-		}
+	_ = filepath.Walk(a.BaseSaveDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil { return nil }
 		if !info.IsDir() && filepath.Ext(path) == ".ts" {
 			rel, _ := filepath.Rel(a.BaseSaveDir, path)
 			parts := strings.Split(rel, string(os.PathSeparator))
 			if len(parts) >= 2 {
-				// 檢查此檔案是否正在被錄製 (比對 LatestFile)
 				isGrowing := false
 				for _, stream := range resp.Streams {
 					if stream.LatestFile == info.Name() && stream.IsRecording {
@@ -789,7 +935,6 @@ func (a *App) handleIndex(w http.ResponseWriter, r *http.Request) {
 		return nil
 	})
 
-	// 4. 解析 HTML 並渲染
 	tmpl, err := template.New("index").Parse(htmlTemplate)
 	if err != nil {
 		http.Error(w, "模板解析錯誤", http.StatusInternalServerError)
@@ -809,8 +954,9 @@ func (a *App) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	tmpl.Execute(w, data)
+	_ = tmpl.Execute(w, data)
 }
+
 func showCLIStatus(port int) {
 	url := fmt.Sprintf("http://localhost:%d/api/status", port)
 	resp, err := http.Get(url)
@@ -828,9 +974,7 @@ func showCLIStatus(port int) {
 
 	gb := float64(1024 * 1024 * 1024)
 	pct := 0.0
-	if r.System.DiskTotal > 0 {
-		pct = (float64(r.System.DiskUsed) / float64(r.System.DiskTotal)) * 100
-	}
+	if r.System.DiskTotal > 0 { pct = (float64(r.System.DiskUsed) / float64(r.System.DiskTotal)) * 100 }
 
 	fmt.Println("\x1b[36m==================== 📊 核心叢集實時狀態 ====================\x1b[0m")
 	fmt.Printf(" 💾 磁碟空間: 已用 %.2f GB / 總共 %.2f GB (使用 %.1f%%)\n", float64(r.System.DiskUsed)/gb, float64(r.System.DiskTotal)/gb, pct)
@@ -857,128 +1001,296 @@ func terminateService(port int) {
 	fmt.Println("\x1b[32m[CLEAN] ✨ 背景叢集所有殘留程序已徹底清空！\x1b[0m")
 }
 
+// ====================================================================================
+// 🎨 以下是全新深度優化 RWD 行動裝置體驗的 HTML/CSS 樣式模板
+// ====================================================================================
 const htmlTemplate = `<!DOCTYPE html>
 <html lang="zh-TW">
 <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>go_straight Master Control Panel</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>go_straight 總控台</title>
     <style>
+        /* 🎨 Catppuccin Mocha 配色調色盤 */
         :root {
-            --bg-main: #0a0a0c;
-            --bg-card: #141419;
-            --border-color: #24242e;
-            --text-main: #e3e3ed;
-            --text-muted: #84849a;
-            --accent-blue: #0070f3;
-            --accent-green: #10b981;
-            --accent-red: #ef4444;
-            --accent-orange: #f59e0b;
+            --bg-main: #1e1e2e;         
+            --bg-card: #181825;         
+            --bg-strip: #11111b;        
+            --border-color: #313244;    
+            --text-main: #cdd6f4;       
+            --text-muted: #a6adc8;      
+            --accent-blue: #89b4fa;     
+            --accent-green: #a6e3a1;    
+            --accent-red: #f38ba8;      
+            --accent-orange: #fab387;   
+            --accent-lavender: #b4befe; 
         }
-        body { background-color: var(--bg-main); color: var(--text-main); font-family: -apple-system, sans-serif; margin: 0; padding: 30px; display: flex; justify-content: center; }
-        .container { width: 100%; max-width: 1100px; }
-        header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; }
-        h2 { margin: 0; font-size: 24px; font-weight: 700; }
-        .monitor-card { background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 12px; padding: 20px; margin-bottom: 25px; box-shadow: 0 4px 20px rgba(0,0,0,0.4); }
-        .meta-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; font-size: 14px; }
-        .meta-label { color: var(--text-muted); display: flex; align-items: center; gap: 8px; }
-        .meta-value { font-weight: 600; font-family: monospace; font-size: 15px; }
-        .progress-bg { width: 100%; height: 8px; background: #0d0d11; border-radius: 4px; overflow: hidden; margin-bottom: 18px; border: 1px solid #1c1c24; }
-        .progress-fill { height: 100%; width: 0%; background: var(--accent-blue); border-radius: 4px; transition: width 0.4s ease; }
-         
-        .channel-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 15px; margin-bottom: 30px; }
-        .channel-box { background: #111116; border: 1px solid var(--border-color); border-radius: 8px; padding: 15px; display: flex; flex-direction: column; justify-content: space-between; }
-        .channel-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
-        .channel-name { font-weight: bold; font-size: 16px; color: var(--text-main); }
-         
-        .probe-btn {
-            background-color: #24242e; color: var(--text-main);
-            border: 1px solid #3b3b4a; padding: 3px 8px;
-            border-radius: 4px; cursor: pointer; font-size: 11px;
-            margin-right: 8px; font-weight: 600; transition: background 0.2s;
-        }
-        .probe-btn:hover { background-color: #3b3b4a; }
-        .probe-btn:active { background-color: var(--accent-blue); border-color: var(--accent-blue); }
 
-        .badge { font-size: 11px; padding: 3px 8px; border-radius: 4px; font-weight: 600; }
-        .badge-offline { background: #22222a; color: var(--text-muted); border: 1px solid var(--border-color); }
-        .badge-live { background: rgba(239, 68, 68, 0.15); color: var(--accent-red); border: 1px solid var(--accent-red); animation: pulse 2s infinite; }
-        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+        body { background-color: var(--bg-main); color: var(--text-main); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 15px; display: flex; justify-content: center; -webkit-font-smoothing: antialiased; }
+        .container { width: 100%; max-width: 1200px; }
+        
+        header { display: flex; flex-direction: column; gap: 15px; margin-bottom: 20px; border-bottom: 2px solid var(--border-color); padding-bottom: 15px; }
+        .header-title-area { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; width: 100%; }
+        h2 { margin: 0; font-size: 20px; font-weight: 800; color: var(--accent-lavender); letter-spacing: -0.5px; line-height: 1.3; }
+        .header-btn-group { display: flex; gap: 10px; width: 100%; flex-wrap: wrap; }
+        .btn-mini { flex: 1; min-width: 80px; padding: 12px; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.2s; border: 1px solid transparent; text-align: center; }
+        .btn-mini-log { 
+    background: rgba(166, 227, 161, 0.12); /* 綠色半透明背景 */
+    color: var(--accent-green);            /* 綠色字體 */
+    border-color: rgba(166, 227, 161, 0.35); /* 👈 這行就是你要的綠色按鈕框框 */
+}
+.btn-mini-log:active { 
+    background: var(--accent-green);       /* 手機按下去時變成全綠底 */
+    color: #11111b;                        /* 按下去時字體變深色 */
+}.btn-mini-restart { background: rgba(250, 179, 135, 0.12); color: var(--accent-orange); border-color: rgba(250, 179, 135, 0.25); }
+        .btn-mini-restart:active { background: var(--accent-orange); color: #11111b; }
+        .btn-mini-danger { background: rgba(243, 139, 168, 0.12); color: var(--accent-red); border-color: rgba(243, 139, 168, 0.25); }
+        .btn-mini-danger:active { background: var(--accent-red); color: #11111b; }
 
-        table { width: 100%; border-collapse: separate; border-spacing: 0; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 12px; overflow: hidden; }
-        th { background: #171721; color: var(--text-muted); font-size: 13px; font-weight: 600; padding: 14px 18px; text-align: left; border-bottom: 1px solid var(--border-color); }
-        td { padding: 14px 18px; font-size: 14px; border-bottom: 1px solid var(--border-color); color: var(--text-main); }
-        tr:last-child td { border-bottom: none; }
-        tr:hover td { background: #181822; }
-        .file-link { color: #58a6ff; text-decoration: none; font-weight: 600; }
-        .file-link:hover { color: #8ab4f8; text-underline-position: under; text-decoration: underline; }
-        .row-growing { background: rgba(16, 185, 129, 0.02) !important; }
+        .monitor-grid { display: grid; grid-template-columns: 1fr; gap: 15px; margin-bottom: 25px; }
+        .monitor-card { background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 12px; padding: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.2); }
+        .meta-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-size: 13px; }
+        .meta-label { color: var(--text-muted); display: flex; align-items: center; gap: 6px; font-weight: 600; }
+        .meta-value { font-weight: 700; font-family: monospace; color: var(--accent-blue); }
+        .progress-bg { width: 100%; height: 6px; background: #11111b; border-radius: 3px; overflow: hidden; border: 1px solid rgba(255,255,255,0.02); }
+        .progress-fill { height: 100%; width: 0%; background: var(--accent-blue); border-radius: 3px; transition: width 0.5s ease-in-out; }
+
+        .section-title-row { display: flex; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 12px; margin-top: 10px; }
+        .section-title { font-size: 16px; color: var(--text-muted); font-weight: 700; display: flex; align-items: center; gap: 8px; margin: 0; }
+        .window-tag { background: rgba(180, 190, 254, 0.1); color: var(--accent-lavender); border: 1px solid rgba(180, 190, 254, 0.3); padding: 4px 10px; border-radius: 6px; font-size: 12px; font-family: monospace; font-weight: 700; }
+
+        .channel-grid { display: grid; grid-template-columns: 1fr; gap: 15px; margin-bottom: 30px; }
+        .channel-box { background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 12px; padding: 15px; display: flex; flex-direction: column; justify-content: space-between; position: relative; box-shadow: 0 4px 15px rgba(0,0,0,0.15); }
+        .channel-box.recording { border-color: rgba(243, 139, 168, 0.5); background: linear-gradient(145deg, #241b2f, #181825); box-shadow: 0 0 20px rgba(243, 139, 168, 0.1); }
+        .channel-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+        .channel-name { font-weight: 700; font-size: 16px; color: var(--text-main); word-break: break-all; padding-right: 10px; }
+        
+        .badge { font-size: 11px; padding: 4px 8px; border-radius: 6px; font-weight: 700; display: inline-flex; align-items: center; white-space: nowrap; }
+        .badge-offline { background: #313244; color: var(--text-muted); border: 1px solid #45475a; }
+        .badge-live { background: rgba(243, 139, 168, 0.2); color: var(--accent-red); border: 1px solid rgba(243, 139, 168, 0.5); animation: pulse 2s infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
+
+        .channel-body { background: rgba(0,0,0,0.25); border-radius: 8px; padding: 10px; font-size: 13px; font-family: monospace; min-height: 45px; display: flex; flex-direction: column; justify-content: center; border: 1px solid rgba(255,255,255,0.02); }
+        .probe-msg { color: var(--text-muted); line-height: 1.5; word-break: break-all; }
+        .rec-info { display: none; margin-top: 10px; font-size: 12px; color: var(--text-muted); border-top: 1px solid var(--border-color); padding-top: 10px; line-height: 1.6; }
+        .channel-box.recording .rec-info { display: block; }
+        .rec-file { word-break: break-all; }
+
+        .btn { width: 100%; padding: 12px; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.2s; border: 1px solid transparent; margin-top: 12px; }
+        .btn-probe { background: #313244; color: #cdd6f4; border-color: #45475a; }
+        .btn-probe:active { background: #45475a; }
+        .btn-probe:disabled { opacity: 0.4; cursor: not-allowed; }
+        .btn-restart { background: rgba(250, 179, 135, 0.15); color: var(--accent-orange); border-color: rgba(250, 179, 135, 0.4); }
+        .btn-restart:active { background: var(--accent-orange); color: #11111b; }
+
+        .table-container { width: 100%; }
+        table { width: 100%; border-collapse: collapse; background: transparent; }
+        thead { display: none; }
+        tbody tr { display: flex; flex-direction: column; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 12px; margin-bottom: 15px; padding: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.15); }
+        tbody td { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border: none; font-size: 13px; color: var(--text-main); }
+        tbody td::before { content: attr(data-label); color: var(--text-muted); font-size: 12px; font-weight: 600; min-width: 70px; }
+        
+        tbody td.file-name-cell { flex-direction: column; align-items: flex-start; gap: 6px; border-top: 1px solid var(--border-color); border-bottom: 1px solid var(--border-color); margin: 8px 0; padding: 10px 0; }
+        tbody td.file-name-cell::before { display: block; margin-bottom: 4px; }
+        .file-link { color: var(--accent-blue); text-decoration: none; font-weight: 600; display: inline-flex; align-items: flex-start; gap: 6px; word-break: break-all; line-height: 1.4; font-size: 14px; }
+        
+        .channel-tag { background: rgba(137, 180, 250, 0.15); color: var(--accent-blue); border: 1px solid rgba(137, 180, 250, 0.3); padding: 3px 8px; border-radius: 6px; font-size: 12px; font-weight: 700; }
+        .row-growing { background: rgba(166, 227, 161, 0.05) !important; border-color: rgba(166, 227, 161, 0.3) !important; }
         .row-growing td { color: var(--accent-green) !important; }
         .row-growing .file-link { color: var(--accent-green) !important; }
-        .pulse-dot { width: 8px; height: 8px; background: var(--accent-green); border-radius: 50%; display: inline-block; animation: pulse 1.2s infinite; }
+        .pulse-dot { min-width: 8px; width: 8px; height: 8px; background: var(--accent-green); border-radius: 50%; display: inline-block; position: relative; top: 4px; animation: dotPulse 1.2s infinite; }
+        @keyframes dotPulse { 0% { transform: scale(0.8); opacity: 0.5; } 50% { transform: scale(1.2); opacity: 1; } 100% { transform: scale(0.8); opacity: 0.5; } }
+        .empty-row td { justify-content: center; color: var(--text-muted); padding: 30px 10px; text-align: center; }
+        .empty-row td::before { display: none; }
+
+        .log-modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(17,17,27,0.85); z-index: 9999; box-sizing: border-box; padding: 10px; }
+        .log-box { display: flex; flex-direction: column; background: #11111b; border: 1px solid var(--border-color); width: 100%; height: 100%; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); overflow: hidden; }
+        .log-header { background: var(--bg-card); padding: 12px 15px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); }
+        .log-title { font-weight: bold; color: var(--accent-lavender); font-size: 15px; display: flex; align-items: center; gap: 8px; }
+        .log-close { background: rgba(243, 139, 168, 0.2); color: var(--accent-red); border: 1px solid rgba(243, 139, 168, 0.4); padding: 6px 14px; border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 13px; }
+        .log-body { flex: 1; padding: 15px; overflow-y: auto; font-family: 'Courier New', Courier, monospace; font-size: 12px; line-height: 1.5; color: #a6e3a1; white-space: pre-wrap; word-break: break-all; scroll-behavior: smooth; }
+
+        @media (min-width: 768px) {
+            body { padding: 30px; }
+            header { flex-direction: row; justify-content: space-between; align-items: center; }
+            .header-title-area { flex-direction: row; align-items: center; width: auto; }
+            h2 { font-size: 24px; white-space: nowrap; }
+            .header-btn-group { width: auto; }
+            .btn-mini { flex: none; padding: 6px 14px; font-size: 12px; }
+            .btn-mini:hover { filter: brightness(1.2); }
+            
+            .channel-grid { grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+            .btn { width: auto; padding: 8px 16px; margin-top: 0; font-size: 13px; }
+            .channel-box > div:last-child { display: flex; justify-content: flex-end; margin-top: 15px; }
+
+            table { background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.2); overflow: hidden; }
+            thead { display: table-header-group; background: var(--bg-strip); }
+            th { color: var(--text-muted); font-size: 13px; font-weight: 600; padding: 14px 20px; text-align: left; border-bottom: 1px solid var(--border-color); }
+            tbody tr { display: table-row; background: transparent; border: none; margin: 0; padding: 0; box-shadow: none; border-radius: 0; }
+            tbody tr:hover td { background: rgba(255,255,255,0.02); }
+            tbody td { display: table-cell; padding: 14px 20px; border-bottom: 1px solid var(--border-color); font-size: 14px; }
+            tbody td::before { display: none; }
+            tbody td.file-name-cell { flex-direction: row; align-items: center; border-top: none; margin: 0; padding: 14px 20px; }
+            .file-link:hover { color: #b4befe; text-decoration: underline; }
+            .pulse-dot { top: -1px; }
+            tbody tr:last-child td { border-bottom: none; }
+            
+            .log-modal { padding: 40px; }
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <header>
-            <h2>🎥 錄影總控台</h2>
-            <span style="font-size:13px; color:var(--text-muted)">排程警戒窗: {{.ProbeStart}} ~ {{.ProbeEnd}}</span>
+            <div class="header-title-area">
+                <h2>🎥 go_straight 總控台</h2>
+                <div class="header-btn-group">
+                    <button onclick="openLogViewer()" class="btn-mini btn-mini-log">日誌</button>
+                    <button onclick="restartCluster()" class="btn-mini btn-mini-restart">重啟</button>
+                    <button onclick="shutdownCluster()" class="btn-mini btn-mini-danger">關閉</button>
+                </div>
+            </div>
         </header>
 
-        <div class="monitor-card">
-            <div class="meta-row">
-                <span class="meta-label">💾 系統儲存空間總覽</span>
-                <span id="diskText" class="meta-value">讀取中...</span>
+        <div class="monitor-grid">
+            <div class="monitor-card">
+                <div class="meta-row">
+                    <span class="meta-label">💾 儲存空間總覽</span>
+                    <span id="diskText" class="meta-value">讀取中...</span>
+                </div>
+                <div class="progress-bg"><div id="diskBarFill" class="progress-fill"></div></div>
             </div>
-            <div class="progress-bg"><div id="diskBarFill" class="progress-fill"></div></div>
-            <div class="meta-row">
-                <span class="meta-label">⚡ 系統負載 <span id="cpuText" style="color:var(--text-main); margin-left:5px;">(CPU: --)</span></span>
-                <span id="ramText" class="meta-value">RAM: --</span>
+            <div class="monitor-card">
+                <div class="meta-row">
+                    <span class="meta-label">⚡ 系統負載效能</span>
+                    <span id="ramText" class="meta-value">RAM: --</span>
+                </div>
+                <div class="meta-row" style="margin-top: 5px; margin-bottom: 10px;">
+                    <span id="cpuText" style="color:var(--text-main); font-family: monospace; font-size: 14px; font-weight: bold;">CPU: --</span>
+                </div>
+                <div class="progress-bg"><div id="ramBarFill" class="progress-fill" style="background-color: var(--accent-green);"></div></div>
             </div>
-            <div class="progress-bg"><div id="ramBarFill" class="progress-fill" style="background-color: var(--accent-green);"></div></div>
         </div>
 
-        <h3 style="font-size:16px; color:var(--text-muted); margin-bottom:12px;">📡 各頻道哨兵實時雷達</h3>
+        <div class="section-title-row">
+            <h3 class="section-title">📡 各頻道哨兵實時雷達</h3>
+            <span class="window-tag">警戒時段：{{.ProbeStart}} ~ {{.ProbeEnd}}</span>
+        </div>
+        
         <div class="channel-grid">
             {{range $prefix, $state := .Streams}}
-            <div class="channel-box" data-channel="{{$prefix}}">
-                <div class="channel-header">
-                    <span class="channel-name">@{{$prefix}}</span>
-                    <div>
-                        <button onclick="forceProbe(this, '{{$prefix}}')" class="probe-btn">⚡ 立即刺探</button>
-                        <span class="badge badge-offline status-badge">⚪ 未開播</span>
+            <div class="channel-box {{if $state.IsRecording}}recording{{end}}" data-channel="{{$prefix}}">
+                <div>
+                    <div class="channel-header">
+                        <span class="channel-name" title="@{{$prefix}}">@{{$prefix}}</span>
+                        <span class="badge {{if $state.IsRecording}}badge-live{{else}}badge-offline{{end}} status-badge">
+                            {{if $state.IsRecording}}🔴 錄影中{{else}}⚪ 待命{{end}}
+                        </span>
+                    </div>
+                    <div class="channel-body">
+                        <div class="probe-msg">{{$state.ProbeStatus}}</div>
                     </div>
                 </div>
-                <div style="font-size: 13px; color: var(--accent-orange); font-family: monospace;" class="probe-msg">連線中...</div>
+                
+                <div class="rec-info">
+                    <div class="rec-file">📁 檔名: {{$state.LatestFile}}</div>
+                    <div class="rec-size">📦 大小: --</div>
+                </div>
+
+                <div>
+                    {{if $state.IsRecording}}
+                    <button onclick="restartStream(this, '{{$prefix}}')" class="btn btn-restart action-btn">🔄 重啟錄影</button>
+                    {{else}}
+                    <button onclick="forceProbe(this, '{{$prefix}}')" class="btn btn-probe action-btn" {{if $state.IsProbing}}disabled{{end}}>⚡ 立即刺探</button>
+                    {{end}}
+                </div>
             </div>
             {{end}}
         </div>
 
-        <h3 style="font-size:16px; color:var(--text-muted); margin-bottom:12px;">📂 已錄製歷史片段 (合併視窗)</h3>
-        <table>
-            <thead><tr><th>所屬頻道</th><th>檔案名稱</th><th>容量大小</th><th>最後修改時間</th></tr></thead>
-            <tbody id="file-body">
-                {{range .Files}}
-                <tr data-filename="{{.Name}}" class="{{if .IsGrowing}}row-growing{{end}}">
-                    <td style="font-weight:bold;">@{{.Channel}}</td>
-                    <td>{{if .IsGrowing}}<span class="pulse-dot" style="margin-right:6px;"></span>{{end}}<a class="file-link" href="/download/{{.Channel}}/{{.Name}}" download>{{.Name}}</a></td>
-                    <td class="file-size" data-bytes="{{.SizeBytes}}">計算中...</td>
-                    <td class="file-mtime">{{.MTime}}</td>
-                </tr>
-                {{else}}
-                <tr><td colspan="4" style="text-align:center; color:var(--text-muted); padding:30px;">目前尚無任何錄影。全艦雷達暗中守候中...</td></tr>
-                {{end}}
-            </tbody>
-        </table>
+        <div class="section-title-row">
+            <h3 class="section-title">📂 已錄製歷史片段</h3>
+        </div>
+        
+        <div class="table-container">
+            <table>
+                <thead><tr><th>所屬頻道</th><th>檔案名稱</th><th>容量大小</th><th>修改時間</th></tr></thead>
+                <tbody id="file-body">
+                    {{range .Files}}
+                    <tr data-filename="{{.Name}}" class="{{if .IsGrowing}}row-growing{{end}}">
+                        <td data-label="頻道"><span class="channel-tag">@{{.Channel}}</span></td>
+                        <td data-label="檔名" class="file-name-cell">
+                            <div style="display:flex; align-items:flex-start;">
+                                {{if .IsGrowing}}<span class="pulse-dot" style="margin-right:8px;"></span>{{end}}
+                                <a class="file-link" href="/download/{{.Channel}}/{{.Name}}" download>
+                                    📥 {{.Name}}
+                                </a>
+                            </div>
+                        </td>
+                        <td data-label="大小" class="file-size" data-bytes="{{.SizeBytes}}">計算中...</td>
+                        <td data-label="時間" class="file-mtime" style="color: var(--text-muted); font-family: monospace;">{{.MTime}}</td>
+                    </tr>
+                    {{else}}
+                    <tr class="empty-row"><td colspan="4">目前尚無任何錄影。全艦雷達暗中守候中...</td></tr>
+                    {{end}}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div id="logModal" class="log-modal">
+        <div class="log-box">
+            <div class="log-header">
+                <div class="log-title"><span>📟</span> livetool.log 即時診斷終端 (最後 300 行)</div>
+                <button onclick="closeLogViewer()" class="log-close">❌ 關閉視窗</button>
+            </div>
+            <div id="logBody" class="log-body">正在連線至雷達叢集核心獲取日誌...</div>
+        </div>
     </div>
 
     <script>
+        let logInterval = null;
+
         function formatBytes(bytes) {
             if (bytes === 0) return "0.00 MB";
             var k = 1024, sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'], i = Math.floor(Math.log(bytes) / Math.log(k));
             if (i < 2) i = 2; 
             var val = bytes / Math.pow(k, i);
-            return (sizes[i] === 'GB' || sizes[i] === 'TB') ? "<b>" + val.toFixed(2) + " " + sizes[i] + "</b>" : val.toFixed(2) + " " + sizes[i];
+            return (sizes[i] === 'GB' || sizes[i] === 'TB') ? val.toFixed(2) + " " + sizes[i] : val.toFixed(2) + " " + sizes[i];
+        }
+
+        function openLogViewer() {
+            const modal = document.getElementById("logModal");
+            modal.style.display = "block";
+            document.body.style.overflow = "hidden";
+            
+            fetchLogs();
+            logInterval = setInterval(fetchLogs, 2000); 
+        }
+
+        function closeLogViewer() {
+            document.getElementById("logModal").style.display = "none";
+            document.body.style.overflow = "auto";
+            if (logInterval) {
+                clearInterval(logInterval);
+                logInterval = null;
+            }
+        }
+
+        function fetchLogs() {
+            const logBody = document.getElementById("logBody");
+            fetch('/api/logs')
+                .then(r => r.text())
+                .then(text => {
+                    const isAtBottom = logBody.scrollHeight - logBody.clientHeight <= logBody.scrollTop + 100;
+                    logBody.innerText = text;
+                    if (isAtBottom) {
+                        logBody.scrollTop = logBody.scrollHeight;
+                    }
+                })
+                .catch(err => {
+                    logBody.innerText = "[ERROR] 日誌通訊管道異常: " + err;
+                });
         }
 
         function forceProbe(btn, prefix) {
@@ -994,6 +1306,31 @@ const htmlTemplate = `<!DOCTYPE html>
                 });
         }
 
+        function restartStream(btn, prefix) {
+            if (!confirm("確定要強制中斷 @" + prefix + " 當前錄影並重啟嗎？\n（當前片段將封存，系統立刻開新檔接續）")) return;
+            btn.disabled = true;
+            btn.innerText = "⏳ 正在重啟...";
+            fetch('/api/restart?prefix=' + prefix)
+                .then(r => {
+                    if(!r.ok) return r.json().then(e => { throw new Error(e.error); });
+                    return r.json();
+                })
+                .catch(e => {
+                    alert(e.message);
+                    btn.disabled = false;
+                    btn.innerText = "🔄 重啟錄影";
+                });
+        }
+
+        function shutdownCluster() {
+            if (confirm("⚠️ 警告：即刻中斷所有錄影，關閉後台 Go 核心。確定執行？")) {
+                fetch('/api/shutdown').then(r => r.json()).then(d => {
+                    alert("指令發送成功：核心服務已安全關閉。");
+                    window.close();
+                }).catch(e => alert("連線中斷，服務可能已關閉。"));
+            }
+        }
+
         document.querySelectorAll('.file-size').forEach(function(td) {
             var b = parseInt(td.getAttribute('data-bytes'));
             if(!isNaN(b)) td.innerHTML = formatBytes(b);
@@ -1003,12 +1340,12 @@ const htmlTemplate = `<!DOCTYPE html>
             fetch('/api/status').then(r => r.json()).then(data => {
                 var totalGB = data.system.disk_total / (1024*1024*1024), availGB = data.system.disk_avail / (1024*1024*1024), usedGB = data.system.disk_used / (1024*1024*1024);
                 var pct = totalGB > 0 ? (usedGB / totalGB) * 100 : 0;
-                document.getElementById("diskText").innerText = "已用 " + usedGB.toFixed(2) + " GB / 總共 " + totalGB.toFixed(2) + " GB (可用 " + availGB.toFixed(2) + " GB)";
+                document.getElementById("diskText").innerText = usedGB.toFixed(2) + " / " + totalGB.toFixed(2) + " GB";
                 var bar = document.getElementById("diskBarFill");
                 bar.style.width = pct.toFixed(1) + "%";
                 bar.style.backgroundColor = pct > 90 ? "var(--accent-red)" : (pct > 75 ? "var(--accent-orange)" : "var(--accent-blue)");
 
-                document.getElementById("cpuText").innerText = "(CPU: " + (data.system.cpu_load || "計算中...") + ")";
+                document.getElementById("cpuText").innerText = "CPU: " + (data.system.cpu_load || "計算中...");
                 if (data.system.ram_percent > 0) {
                     document.getElementById("ramText").innerText = "RAM: " + data.system.ram_percent.toFixed(1) + "%";
                     var ramBar = document.getElementById("ramBarFill");
@@ -1019,33 +1356,47 @@ const htmlTemplate = `<!DOCTYPE html>
                 Object.entries(data.streams).forEach(([prefix, stream]) => {
                     var box = document.querySelector('div[data-channel="' + prefix + '"]');
                     if (box) {
+                        var wasRecording = box.classList.contains("recording");
+                        if(stream.is_recording) {
+                            box.classList.add("recording");
+                        } else {
+                            box.classList.remove("recording");
+                        }
+
+                        if (wasRecording !== stream.is_recording) { reloadRequired = true; }
+
                         var badge = box.querySelector(".status-badge");
                         if (badge) {
                             badge.className = stream.is_recording ? "badge badge-live" : "badge badge-offline";
                             badge.innerHTML = stream.is_recording ? "🔴 錄影中" : "⚪ 待命";
                         }
                         var msgCell = box.querySelector(".probe-msg");
-                        if (msgCell) {
-                            msgCell.innerText = stream.probe_status;
+                        if (msgCell) { msgCell.innerText = stream.probe_status; }
+                        
+                        var btn = box.querySelector(".action-btn");
+                        if (btn && !reloadRequired) { 
+                            if (!stream.is_recording) { btn.disabled = stream.is_probing; }
                         }
-                        var btn = box.querySelector(".probe-btn");
-                        if (btn && !stream.is_probing && !stream.is_recording) {
-                            btn.disabled = false; 
+
+                        if (stream.is_recording && stream.latest_file) {
+                            var recFile = box.querySelector(".rec-file");
+                            var recSize = box.querySelector(".rec-size");
+                            if(recFile) recFile.innerText = "📁 檔名: " + stream.latest_file;
+                            if(recSize) recSize.innerText = "📦 大小: " + formatBytes(stream.latest_size);
                         }
                     }
 
                     if (stream.is_recording && stream.latest_file) {
                         var targetRow = document.querySelector('tr[data-filename="' + stream.latest_file + '"]');
                         if (targetRow) {
+                            targetRow.classList.add("row-growing");
                             var sizeCell = targetRow.querySelector(".file-size");
                             if (sizeCell) {
                                 sizeCell.setAttribute("data-bytes", stream.latest_size);
                                 sizeCell.innerHTML = formatBytes(stream.latest_size);
                             }
                             var mtimeCell = targetRow.querySelector(".file-mtime");
-                            if (mtimeCell) {
-                                mtimeCell.innerHTML = stream.latest_mtime;
-                            }
+                            if (mtimeCell) { mtimeCell.innerHTML = stream.latest_mtime; }
                         } else {
                             reloadRequired = true;
                         }
@@ -1053,9 +1404,7 @@ const htmlTemplate = `<!DOCTYPE html>
                 });
 
                 if (reloadRequired) { location.reload(); }
-            }).catch(e => { 
-                console.error("雷達發生異常:", e);
-            });
+            }).catch(e => { console.error("雷達通訊異常:", e); });
         }, 2000);
     </script>
 </body>
