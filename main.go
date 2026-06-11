@@ -1,11 +1,12 @@
 package main
 
 import (
-	"bytes"
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"io"
 	"log"
 	"math/rand"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -207,6 +209,9 @@ func main() {
 		go app.templateProbeRadar(stream)
 	}
 
+	// 📥 掛載背景 5 分鐘自動核心健康檢查自檢守護進程
+	app.startSelfCheck()
+
 	http.HandleFunc("/", app.handleIndex)
 	http.HandleFunc("/api/status", app.handleAPIStatus)
 	http.HandleFunc("/api/shutdown", app.handleAPIShutdown)
@@ -214,6 +219,7 @@ func main() {
 	http.HandleFunc("/api/restart", app.handleAPIRestart) 
 	http.HandleFunc("/api/restart_cluster", app.handleAPIRegionalRestart) 
 	http.HandleFunc("/api/logs", app.handleAPILogs) 
+	http.HandleFunc("/api/log_status", app.handleAPILogStatus) // 📥 註冊手動狀態紀錄 API
 
 	addr := fmt.Sprintf(":%d", app.Config.WebPort)
 	log.Printf("=========================================================")
@@ -283,8 +289,12 @@ func (a *App) checkTimeWindowSafe() (bool, time.Duration) {
 	}
 	now := time.Now()
 	todayStr := now.Format("2006-01-02")
-	start, _ := time.ParseInLocation("2006-01-02 15:04", todayStr+" "+pStart, time.Local)
-	end, _ := time.ParseInLocation("2006-01-02 15:04", todayStr+" "+pEnd, time.Local)
+	
+	start, err1 := time.ParseInLocation("2006-01-02 15:04", todayStr+" "+pStart, time.Local)
+	end, err2 := time.ParseInLocation("2006-01-02 15:04", todayStr+" "+pEnd, time.Local)
+	if err1 != nil || err2 != nil {
+		return true, 0
+	}
 
 	if end.Before(start) {
 		if now.Before(end) {
@@ -303,12 +313,17 @@ func (a *App) checkTimeWindowSafe() (bool, time.Duration) {
 	} else {
 		nextStart = start.AddDate(0, 0, 1)
 	}
-	return false, nextStart.Sub(now)
+
+	diff := nextStart.Sub(now)
+	if diff < 0 {
+		return true, 0 
+	}
+	return false, diff
 }
 
 func (a *App) templateProbeRadar(s *StreamState) {
 	for {
-	RE_LOOP: 
+	RE_LOOP:
 		s.mu.Lock()
 		isRec := s.IsRecording
 		isProb := s.IsProbing
@@ -316,7 +331,7 @@ func (a *App) templateProbeRadar(s *StreamState) {
 
 		if isRec {
 			a.updateProbeStatus(s, "🟢 已交接錄影 (哨兵常駐監聽中)")
-			time.Sleep(5 * time.Second)
+			time.Sleep(2 * time.Second)
 			continue
 		}
 
@@ -327,6 +342,7 @@ func (a *App) templateProbeRadar(s *StreamState) {
 
 		select {
 		case <-s.ReloadChan:
+			log.Printf("[RADAR] [@%s] 偵測到配置熱變更，重新對齊時間窗口。", s.Prefix)
 		default:
 		}
 
@@ -335,23 +351,30 @@ func (a *App) templateProbeRadar(s *StreamState) {
 
 		if !inWindow {
 			totalSleepSec := int(timeToStart.Seconds())
-			if timeToStart >= time.Duration(probeSleepDeep)*time.Second {
+
+			if totalSleepSec > probeSleepDeep {
 				totalSleepSec = probeSleepDeep
 			}
+
+			if totalSleepSec <= 0 {
+				time.Sleep(5 * time.Second)
+				goto RE_LOOP
+			}
+
+			log.Printf("[RADAR] [@%s] 開播警戒時段外。雷達進入深度休眠 %d 秒 (設定最大深睡: %d 秒)。", s.Prefix, totalSleepSec, probeSleepDeep)
 			
-			log.Printf("[RADAR] [@%s] 當前非戰備時段。雷達將進入深度休眠 %d 秒。", s.Prefix, totalSleepSec)
 			for i := totalSleepSec; i > 0; i-- {
 				s.mu.Lock()
 				if s.IsRecording || s.IsProbing {
 					s.mu.Unlock()
-					break 
+					break
 				}
 				s.mu.Unlock()
 
 				select {
 				case <-s.ReloadChan:
-					log.Printf("[RADAR] [@%s] 收到排程熱載入變更通知！立刻打破長休眠重新計算。", s.Prefix)
-					goto RE_LOOP 
+					log.Printf("[RADAR] [@%s] 深睡中收到排程熱載入變更！立刻打破長休眠重新計算。", s.Prefix)
+					goto RE_LOOP
 				default:
 				}
 
@@ -364,13 +387,14 @@ func (a *App) templateProbeRadar(s *StreamState) {
 
 		a.updateProbeStatus(s, "🟣 發送網路請求中 (檢測開播狀態...)")
 		log.Printf("[RADAR] [@%s] 警戒戰備期間，啟動常規流狀態刺探...", s.Prefix)
-		
+
 		if a.checkLiveStatusAndLog(s.Prefix, s.TargetURL) {
 			log.Printf("[RADAR] [@%s] 🎯 命中！確認主播已開播，準備移交錄影核心管線。", s.Prefix)
 			a.startRecordingWrapper(s)
 		} else {
 			waitTime := probeInterval + rand.Intn(21)
 			log.Printf("[RADAR] [@%s] 🔎 刺探結果：尚未開播。隨機冷卻下一次檢測： %d 秒後。", s.Prefix, waitTime)
+			
 			for i := waitTime; i > 0; i-- {
 				s.mu.Lock()
 				if s.IsRecording || s.IsProbing {
@@ -381,7 +405,7 @@ func (a *App) templateProbeRadar(s *StreamState) {
 
 				select {
 				case <-s.ReloadChan:
-					log.Printf("[RADAR] [@%s] 戰備期間收到排程熱變更，重新對齊。", s.Prefix)
+					log.Printf("[RADAR] [@%s] 戰備倒數期間收到排程熱變更，立刻重新對齊。", s.Prefix)
 					goto RE_LOOP
 				default:
 				}
@@ -438,13 +462,16 @@ END_RECORD:
 
 func (a *App) runRecordEngine(ctx context.Context, s *StreamState) {
 	tsFile := filepath.Join(s.SaveDir, time.Now().Format("20060102-150405")+".ts")
-	log.Printf("[CORE] [@%s] 錄影核心管線建立成功，輸出路徑: %s", s.Prefix, filepath.Base(tsFile))
+	
+	nowStr := time.Now().Format("15:04:05")
+	log.Printf("\x1b[36m%s [MINER-CONNECT] 📡 Target: %s\x1b[0m", nowStr, s.TargetURL)
+	log.Printf("\x1b[36m%s [MINER-JOB] 🔨 Output: %s\x1b[0m", nowStr, filepath.Base(tsFile))
 
 	startTime := time.Now()
 
 	streamlinkCmd := exec.CommandContext(ctx, "ionice", "-c", "2", "-n", "0",
 		"streamlink", s.TargetURL, "hd,ld,best",
-		"--loglevel", "warning",
+		"--loglevel", "info", 
 		"--ringbuffer-size", "512M",
 		"--stream-segment-threads", "1",
 		"--stream-timeout", "60",
@@ -455,80 +482,158 @@ func (a *App) runRecordEngine(ctx context.Context, s *StreamState) {
 	)
 
 	ffmpegCmd := exec.CommandContext(ctx, "ionice", "-c", "2", "-n", "0",
-		"ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-thread_queue_size", "1024", "-i", "pipe:0", "-c", "copy", "-f", "mpegts", tsFile,
+		"ffmpeg", "-hide_banner", "-loglevel", "info", "-progress", "pipe:2", "-y", "-thread_queue_size", "1024", "-i", "pipe:0", "-c", "copy", "-f", "mpegts", tsFile,
 	)
 
 	streamlinkCmd.Env = append(os.Environ(), "LD_PRELOAD=/usr/lib/libjemalloc.so")
 	ffmpegCmd.Env = append(os.Environ(), "LD_PRELOAD=/usr/lib/libjemalloc.so")
 
-	var streamlinkStderr bytes.Buffer
-	var ffmpegStderr bytes.Buffer
-	streamlinkCmd.Stderr = &streamlinkStderr
-	ffmpegCmd.Stderr = &ffmpegStderr
+	// 🔥【進程組安全升級】設定獨立進程組 ID，防止 ffmpeg 脫管變成孤兒或殭屍
+	if runtime.GOOS != "windows" {
+		streamlinkCmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		ffmpegCmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	}
+
+	// 監聽 Context 熔斷。一旦觸發，強行發送 SIGKILL 至負的進程 PID（整組蒸發）
+	go func() {
+		<-ctx.Done()
+		if runtime.GOOS != "windows" {
+			if streamlinkCmd.Process != nil {
+				_ = syscall.Kill(-streamlinkCmd.Process.Pid, syscall.SIGKILL)
+			}
+			if ffmpegCmd.Process != nil {
+				_ = syscall.Kill(-ffmpegCmd.Process.Pid, syscall.SIGKILL)
+			}
+		}
+	}()
+
+	var lastStreamlinkMsg string = "Waiting for data..."
+	var lastFfmpegMsg string = "bitrate=0kb/s speed=0x"
+	var msgMu sync.Mutex
+
+	slStderr, _ := streamlinkCmd.StderrPipe()
+	go func() {
+		scanner := bufio.NewScanner(slStderr)
+		for scanner.Scan() {
+			line := scanner.Text()
+			if strings.Contains(line, "[") { 
+				msgMu.Lock()
+				lastStreamlinkMsg = strings.TrimSpace(line)
+				msgMu.Unlock()
+			}
+		}
+	}()
+
+	ffStderr, _ := execCommandStderrPipe(ffmpegCmd) 
+	go func() {
+		scanner := bufio.NewScanner(ffStderr)
+		var currentBitrate, currentSpeed string
+		for scanner.Scan() {
+			line := scanner.Text()
+			if strings.HasPrefix(line, "bitrate=") {
+				currentBitrate = strings.TrimPrefix(line, "bitrate=")
+			}
+			if strings.HasPrefix(line, "speed=") {
+				currentSpeed = strings.TrimPrefix(line, "speed=")
+				msgMu.Lock()
+				lastFfmpegMsg = fmt.Sprintf("bitrate=%s speed=%s", currentBitrate, currentSpeed)
+				msgMu.Unlock()
+			}
+		}
+	}()
 
 	pipe, err := streamlinkCmd.StdoutPipe()
 	if err != nil {
-		log.Printf("[CORE] [@%s] 建立 Pipe 失敗: %v", s.Prefix, err)
+		log.Printf("\x1b[31m%s [MINER-ERROR] ❌ Pipe setup failed: %v\x1b[0m", time.Now().Format("15:04:05"), err)
 		return
 	}
 	ffmpegCmd.Stdin = pipe
 
 	if err := streamlinkCmd.Start(); err != nil {
-		log.Printf("[CORE] [@%s] Streamlink 啟動失敗: %v", s.Prefix, err)
+		log.Printf("\x1b[31m%s [MINER-ERROR] ❌ Streamlink start failed: %v\x1b[0m", time.Now().Format("15:04:05"), err)
 		return
 	}
 	if err := ffmpegCmd.Start(); err != nil {
-		log.Printf("[CORE] [@%s] FFmpeg 啟動失敗: %v", s.Prefix, err)
+		log.Printf("\x1b[31m%s [MINER-ERROR] ❌ FFmpeg start failed: %v\x1b[0m", time.Now().Format("15:04:05"), err)
 		return
 	}
 
-	log.Printf("[CORE] [@%s] Streamlink (PID: %d) & FFmpeg (PID: %d) 聯動推進中...", s.Prefix, streamlinkCmd.Process.Pid, ffmpegCmd.Process.Pid)
+	log.Printf("\x1b[32m%s [MINER-START] 🚀 Pipeline established! Streamlink(PID:%d) ffmpeg(PID:%d)\x1b[0m", 
+		time.Now().Format("15:04:05"), streamlinkCmd.Process.Pid, ffmpegCmd.Process.Pid)
+
+	engineDone := make(chan struct{})
+	var lastSize int64 = 0
 
 	go func() {
+		ticker := time.NewTicker(3 * time.Second)
+		defer ticker.Stop()
+
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			default:
+			case <-engineDone: 
+				return
+			case <-ticker.C:
+				s.mu.Lock()
+				isRec := s.IsRecording
+				s.mu.Unlock()
+				if !isRec {
+					return
+				}
+
 				fi, err := os.Stat(tsFile)
 				if err == nil {
+					currentSize := fi.Size()
 					s.mu.Lock()
 					s.LatestFile = filepath.Base(tsFile)
 					s.LatestMTime = fi.ModTime().Format("2006-01-02 15:04:05")
-					s.LatestSize = fi.Size()
+					s.LatestSize = currentSize
 					s.mu.Unlock()
+
+					bytesDiff := currentSize - lastSize
+					lastSize = currentSize
+					speedMb := float64(bytesDiff) / (1024 * 1024) / 3.0 
+					totalMb := float64(currentSize) / (1024 * 1024)
+					
+					lifespanSec := int(time.Since(startTime).Seconds())
+					runTimeStr := fmt.Sprintf("%d:%02d", lifespanSec/60, lifespanSec%60)
+					
+					msgMu.Lock()
+					slInfo := lastStreamlinkMsg
+					ffInfo := lastFfmpegMsg
+					msgMu.Unlock()
+					
+					tNow := time.Now().Format("15:04:05")
+					fmt.Printf(
+						"\n[%s] @%s | Up:%s | Total:%.2fMB | Speed:%.2fMB/s | SL:%s | FFmpeg:%s\n",
+						tNow, s.Prefix, runTimeStr, totalMb, speedMb, slInfo, ffInfo,
+					)
+				} else {
+					return
 				}
-				time.Sleep(1 * time.Second)
 			}
 		}
 	}()
 
-	errStreamlink := streamlinkCmd.Wait()
-	errFfmpeg := ffmpegCmd.Wait()
-	lifespan := time.Since(startTime)
+	_ = streamlinkCmd.Wait()
+	_ = ffmpegCmd.Wait()
+	
+	close(engineDone)
 
-	select {
-	case <-ctx.Done():
-		log.Printf("[CORE] [@%s] 錄影收到使用者/系統中斷指令，已主動熔斷管線。時長: %d 秒", s.Prefix, int(lifespan.Seconds()))
-	default:
-		if errStreamlink != nil || errFfmpeg != nil {
-			log.Printf("[ALARM] ⚠️ [@%s] 管線異常崩潰！正在生成深度診斷報告...", s.Prefix)
-			if errStreamlink != nil && streamlinkStderr.Len() > 0 {
-				log.Printf("[DIAGNOSIS] streamlink 遺言:\n%s", strings.TrimSpace(streamlinkStderr.String()))
-			}
-			if errFfmpeg != nil && ffmpegStderr.Len() > 0 {
-				log.Printf("[DIAGNOSIS] ffmpeg 遺言:\n%s", strings.TrimSpace(ffmpegStderr.String()))
-			}
-		}
-	}
+	lifespan := time.Since(startTime)
 
 	fi, err := os.Stat(tsFile)
 	if err != nil || fi.Size() == 0 || lifespan < 5*time.Second {
 		_ = os.Remove(tsFile)
-		log.Printf("[CORE] [@%s] 錄影時間過短 (%d 秒) 或無有效數據，已自動回收垃圾無效碎片檔案。", s.Prefix, int(lifespan.Seconds()))
+		log.Printf("\x1b[33m%s [MINER-RECYCLE] 🗑️ Session too short or empty. Junk file removed.\x1b[0m", time.Now().Format("15:04:05"))
 	} else {
-		log.Printf("[CORE] [@%s] 串流儲存封存成功。最終檔案大小: %.2f MB, 總耗時: %d 秒。", s.Prefix, float64(fi.Size())/(1024*1024), int(lifespan.Seconds()))
+		log.Printf("\x1b[32m%s [MINER-SUMMARY] 🎉 Storage completed! Size: %.2f MB.\x1b[0m", time.Now().Format("15:04:05"), float64(fi.Size())/(1024*1024))
 	}
+}
+
+func execCommandStderrPipe(cmd *exec.Cmd) (io.ReadCloser, error) {
+	return cmd.StderrPipe()
 }
 
 func (a *App) updateProbeStatus(s *StreamState, status string) {
@@ -537,11 +642,8 @@ func (a *App) updateProbeStatus(s *StreamState, status string) {
 	s.mu.Unlock()
 }
 
-// 核心升級：捕獲 CLI 完整輸出並無漏寫入 log
 func (a *App) checkLiveStatusAndLog(prefix string, targetURL string) bool {
 	cmd := exec.Command("streamlink", "--json", targetURL)
-	
-	// 同步捕捉標準輸出與標準錯誤
 	output, err := cmd.CombinedOutput()
 	trimmedOutput := strings.TrimSpace(string(output))
 	
@@ -549,7 +651,6 @@ func (a *App) checkLiveStatusAndLog(prefix string, targetURL string) bool {
 	log.Printf("[CLI-OUTPUT] [@%s] 完整 CLI 輸出如下:\n%s\n----------------------------------------", prefix, trimmedOutput)
 
 	if err != nil {
-		// 指令執行報錯（非 0 狀態碼通常代表未開播或網路錯誤）
 		return false
 	}
 
@@ -677,6 +778,112 @@ func (a *App) getAPIResponseSnapshot() APIResponse {
 	}
 }
 
+// 🩺 startSelfCheck 啟動每 5 分鐘一次的全艦常駐自檢程序
+func (a *App) startSelfCheck() {
+	ticker := time.NewTicker(5 * time.Minute)
+	go func() {
+		log.Println("[SYSTEM] 🩺 全艦 5 分鐘定時核心健康自檢雷達已成功上線！")
+		for range ticker.C {
+			a.performSelfCheck()
+		}
+	}()
+}
+
+// 🩺 performSelfCheck 執行歷史檔案狀態比對（揪出被迫斷流、卡死、無效錄製程序）
+func (a *App) performSelfCheck() {
+	a.updateDiskStatus()
+	a.updateSystemResource()
+
+	a.sysMu.Lock()
+	availGB := float64(a.SysState.DiskAvail) / (1024 * 1024 * 1024)
+	a.sysMu.Unlock()
+
+	if availGB < 5.0 {
+		log.Printf("[HEALTH-WARNING] ⚠️ 【緊急空間告警】儲存剩餘空間極低！僅剩 %.2f GB", availGB)
+	}
+
+	a.StreamsMu.RLock()
+	defer a.StreamsMu.RUnlock()
+
+	for prefix, s := range a.Streams {
+		s.mu.Lock()
+		isRec := s.IsRecording
+		latestFile := s.LatestFile
+		saveDir := s.SaveDir
+		s.mu.Unlock()
+
+		if isRec && latestFile != "" {
+			fullPath := filepath.Join(saveDir, latestFile)
+			fi, err := os.Stat(fullPath)
+			if err == nil {
+				// 判定 A：錄影中，但該硬碟檔案修改時間（ModTime）超過 5 分鐘沒變動 -> 進程死鎖假死
+				if time.Since(fi.ModTime()) > 5*time.Minute {
+					log.Printf("[HEALTH-ERROR] ❌ 偵測到錄影卡死！頻道 @%s 已超過 5 分鐘無資料寫入。強制熔斷救援重連。", prefix)
+					s.mu.Lock()
+					if s.RecordCancel != nil {
+						s.RecordCancel() // 觸發 context.Done 徹底連根清空舊程序並啟動重錄
+					}
+					s.mu.Unlock()
+				} else if fi.Size() == 0 && time.Since(fi.ModTime()) > 2*time.Minute {
+					// 判定 B：錄影成立已超過 2 分鐘，但檔案大小持續為 0 Byte -> 下載無效錄製
+					log.Printf("[HEALTH-ERROR] ❌ 偵測到無效錄製！頻道 @%s 檔案大小持續為 0 Byte。主動重置線路。", prefix)
+					s.mu.Lock()
+					if s.RecordCancel != nil {
+						s.RecordCancel()
+					}
+					s.mu.Unlock()
+				}
+			}
+		}
+	}
+}
+
+// 📥 handleAPILogStatus 網頁點擊「紀錄狀態」時呼叫此 API，將詳細狀態美化輸出至日誌
+func (a *App) handleAPILogStatus(w http.ResponseWriter, r *http.Request) {
+	a.updateDiskStatus()
+	a.updateSystemResource()
+
+	a.sysMu.Lock()
+	diskTotal := a.SysState.DiskTotal
+	diskUsed := a.SysState.DiskUsed
+	diskAvail := a.SysState.DiskAvail
+	cpuLoad := a.SysState.CPULoad
+	ramPercent := a.SysState.RAMPercent
+	a.sysMu.Unlock()
+
+	gb := float64(1024 * 1024 * 1024)
+	pct := 0.0
+	if diskTotal > 0 {
+		pct = (float64(diskUsed) / float64(diskTotal)) * 100
+	}
+
+	log.Println("[DIAGNOSTIC] 📊 === 手動核心實時狀態快照觸發 ===")
+	log.Printf("[DIAGNOSTIC] 💾 磁碟空間: 已用 %.2f GB / 總共 %.2f GB (使用 %.1f%%) | 剩餘 %.2f GB", float64(diskUsed)/gb, float64(diskTotal)/gb, pct, float64(diskAvail)/gb)
+	log.Printf("[DIAGNOSTIC] ⚡ 系統效能: CPU 負載: %s | RAM 使用率: %.1f%%", cpuLoad, ramPercent)
+	log.Println("[DIAGNOSTIC] 📡 --- 各頻道哨兵實時狀態盤點 ---")
+
+	a.StreamsMu.RLock()
+	for name, s := range a.Streams {
+		s.mu.Lock()
+		isRec := s.IsRecording
+		probStatus := s.ProbeStatus
+		latFile := s.LatestFile
+		latSize := s.LatestSize
+		s.mu.Unlock()
+
+		if isRec {
+			log.Printf("[DIAGNOSTIC] 🎬 頻道 @%-12s: ● 錄影中 | 📂 當前檔案: %s (容量: %.2f MB)", name, latFile, float64(latSize)/(1024*1024))
+		} else {
+			log.Printf("[DIAGNOSTIC] 🎬 頻道 @%-12s: ○ 待命中 | 📡 雷達狀態: %s", name, probStatus)
+		}
+	}
+	a.StreamsMu.RUnlock()
+	log.Println("[DIAGNOSTIC] ==========================================")
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(`{"status":"success"}`))
+}
+
 func (a *App) handleAPILogs(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	file, err := os.Open("livetool.log")
@@ -692,7 +899,7 @@ func (a *App) handleAPILogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var bufSize int64 = 128 * 1024 // 放大讀取緩衝至 128KB 容納完整的 CLI JSON
+	var bufSize int64 = 128 * 1024 
 	if stat.Size() < bufSize {
 		bufSize = stat.Size()
 	}
@@ -705,7 +912,7 @@ func (a *App) handleAPILogs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	lines := strings.Split(string(buf), "\n")
-	if len(lines) > 300 { // 增加回傳行數
+	if len(lines) > 300 { 
 		lines = lines[len(lines)-300:]
 	}
 	w.Write([]byte(strings.Join(lines, "\n")))
@@ -800,6 +1007,11 @@ func (a *App) handleAPIRestart(w http.ResponseWriter, r *http.Request) {
 func (a *App) handleAPIRegionalRestart(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Write([]byte(`{"status":"cluster_restarting"}`))
+	
+	if flusher, ok := w.(http.Flusher); ok {
+		flusher.Flush()
+	}
+
 	log.Println("[SYSTEM] 🌐 收到網頁端全艦重啟指令，正在熔斷所有錄影管線並準備重構核心...")
 
 	a.StreamsMu.Lock()
@@ -1002,7 +1214,7 @@ func terminateService(port int) {
 }
 
 // ====================================================================================
-// 🎨 以下是全新深度優化 RWD 行動裝置體驗的 HTML/CSS 樣式模板
+// 🎨 HTML/CSS 樣式模板
 // ====================================================================================
 const htmlTemplate = `<!DOCTYPE html>
 <html lang="zh-TW">
@@ -1011,7 +1223,6 @@ const htmlTemplate = `<!DOCTYPE html>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>go_straight 總控台</title>
     <style>
-        /* 🎨 Catppuccin Mocha 配色調色盤 */
         :root {
             --bg-main: #1e1e2e;         
             --bg-card: #181825;         
@@ -1035,14 +1246,21 @@ const htmlTemplate = `<!DOCTYPE html>
         .header-btn-group { display: flex; gap: 10px; width: 100%; flex-wrap: wrap; }
         .btn-mini { flex: 1; min-width: 80px; padding: 12px; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.2s; border: 1px solid transparent; text-align: center; }
         .btn-mini-log { 
-    background: rgba(166, 227, 161, 0.12); /* 綠色半透明背景 */
-    color: var(--accent-green);            /* 綠色字體 */
-    border-color: rgba(166, 227, 161, 0.35); /* 👈 這行就是你要的綠色按鈕框框 */
-}
-.btn-mini-log:active { 
-    background: var(--accent-green);       /* 手機按下去時變成全綠底 */
-    color: #11111b;                        /* 按下去時字體變深色 */
-}.btn-mini-restart { background: rgba(250, 179, 135, 0.12); color: var(--accent-orange); border-color: rgba(250, 179, 135, 0.25); }
+            background: rgba(166, 227, 161, 0.12); 
+            color: var(--accent-green);            
+            border-color: rgba(166, 227, 161, 0.35); 
+        }
+        .btn-mini-log:active { 
+            background: var(--accent-green);       
+            color: #11111b;                        
+        }
+        .btn-mini-status {
+            background: rgba(137, 180, 250, 0.12);
+            color: var(--accent-blue);
+            border-color: rgba(137, 180, 250, 0.25);
+        }
+        .btn-mini-status:active { background: var(--accent-blue); color: #11111b; }
+        .btn-mini-restart { background: rgba(250, 179, 135, 0.12); color: var(--accent-orange); border-color: rgba(250, 179, 135, 0.25); }
         .btn-mini-restart:active { background: var(--accent-orange); color: #11111b; }
         .btn-mini-danger { background: rgba(243, 139, 168, 0.12); color: var(--accent-red); border-color: rgba(243, 139, 168, 0.25); }
         .btn-mini-danger:active { background: var(--accent-red); color: #11111b; }
@@ -1061,6 +1279,7 @@ const htmlTemplate = `<!DOCTYPE html>
 
         .channel-grid { display: grid; grid-template-columns: 1fr; gap: 15px; margin-bottom: 30px; }
         .channel-box { background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 12px; padding: 15px; display: flex; flex-direction: column; justify-content: space-between; position: relative; box-shadow: 0 4px 15px rgba(0,0,0,0.15); }
+        .channel-box.recording { border-color: rgba(243, 139, 168, 0.5); background: linear-gradient(145deg, #241b2f, #181825); box-shadow: 0 0 20px rgba(243, 139, 168, 0.1); }
         .channel-box.recording { border-color: rgba(243, 139, 168, 0.5); background: linear-gradient(145deg, #241b2f, #181825); box-shadow: 0 0 20px rgba(243, 139, 168, 0.1); }
         .channel-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
         .channel-name { font-weight: 700; font-size: 16px; color: var(--text-main); word-break: break-all; padding-right: 10px; }
@@ -1146,6 +1365,7 @@ const htmlTemplate = `<!DOCTYPE html>
                 <h2>🎥 go_straight 總控台</h2>
                 <div class="header-btn-group">
                     <button onclick="openLogViewer()" class="btn-mini btn-mini-log">日誌</button>
+                    <button onclick="logCurrentStatus()" class="btn-mini btn-mini-status">自檢</button>
                     <button onclick="restartCluster()" class="btn-mini btn-mini-restart">重啟</button>
                     <button onclick="shutdownCluster()" class="btn-mini btn-mini-danger">關閉</button>
                 </div>
@@ -1174,7 +1394,7 @@ const htmlTemplate = `<!DOCTYPE html>
 
         <div class="section-title-row">
             <h3 class="section-title">📡 各頻道哨兵實時雷達</h3>
-            <span class="window-tag">警戒時段：{{.ProbeStart}} ~ {{.ProbeEnd}}</span>
+            <span class="window-tag">戰備時段：{{.ProbeStart}} ~ {{.ProbeEnd}}</span>
         </div>
         
         <div class="channel-grid">
@@ -1223,7 +1443,7 @@ const htmlTemplate = `<!DOCTYPE html>
                             <div style="display:flex; align-items:flex-start;">
                                 {{if .IsGrowing}}<span class="pulse-dot" style="margin-right:8px;"></span>{{end}}
                                 <a class="file-link" href="/download/{{.Channel}}/{{.Name}}" download>
-                                    📥 {{.Name}}
+                                     {{.Name}}
                                 </a>
                             </div>
                         </td>
@@ -1241,7 +1461,7 @@ const htmlTemplate = `<!DOCTYPE html>
     <div id="logModal" class="log-modal">
         <div class="log-box">
             <div class="log-header">
-                <div class="log-title"><span>📟</span> livetool.log 即時診斷終端 (最後 300 行)</div>
+                <div class="log-title"><span>📟</span> log 即時診斷終端</div>
                 <button onclick="closeLogViewer()" class="log-close">❌ 關閉視窗</button>
             </div>
             <div id="logBody" class="log-body">正在連線至雷達叢集核心獲取日誌...</div>
@@ -1290,6 +1510,37 @@ const htmlTemplate = `<!DOCTYPE html>
                 })
                 .catch(err => {
                     logBody.innerText = "[ERROR] 日誌通訊管道異常: " + err;
+                });
+        }
+
+        function logCurrentStatus() {
+            fetch('/api/log_status')
+                .then(r => r.json())
+                .then(d => {
+                    if(d.status === "success") {
+                        // 自動幫忙打開日誌視窗，方便直接閱讀
+                        openLogViewer();
+                    }
+                })
+                .catch(err => alert("發送狀態快照指令失敗: " + err));
+        }
+
+        function restartCluster() {
+            if (!confirm("⚠️ 警告：即刻中斷所有當前錄影，並重啟後台 Go 核心叢集。確定執行？")) return;
+            
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 1200);
+
+            alert("🔄 正在發送全艦重啟指令，系統將於背景重新編譯重構核心。\n請於 5 秒後「手動重新整理」網頁總控台。");
+
+            fetch('/api/restart_cluster', { signal: controller.signal })
+                .then(r => r.json())
+                .then(d => {
+                    clearTimeout(timeoutId);
+                    location.reload();
+                })
+                .catch(e => {
+                    console.log("叢集核心更迭中...");
                 });
         }
 
@@ -1410,3 +1661,4 @@ const htmlTemplate = `<!DOCTYPE html>
 </body>
 </html>
 `
+
