@@ -35,6 +35,7 @@ deactivate
 ./launcher.sh status  # 打開動態監控儀表板 (按 Ctrl+C 退出面板，不影響背景錄影)
 ./launcher.sh stop    # 優雅關閉 (發送 pkill 清空所有相關進程，不留殭屍)
 ./launcher.sh log     # 選擇查看不同組件的系統日誌
+```
 
 ## 設計理念
 
