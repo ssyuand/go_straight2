@@ -46,6 +46,11 @@ type StreamState struct {
 	RecordCtx    context.Context
 	RecordCancel context.CancelFunc
 	ReloadChan   chan struct{}
+
+	// 🩺 新增：工業級自檢健康雷達專用欄位
+	LastCheckFile string
+	LastCheckSize int64
+	GrowthFailCnt int
 }
 
 type StreamStateSnapshot struct {
@@ -209,7 +214,7 @@ func main() {
 		go app.templateProbeRadar(stream)
 	}
 
-	// 📥 掛載背景 5 分鐘自動核心健康檢查自檢守護進程
+	// 📥 掛載背景 1 分鐘自動核心健康檢查自檢守護進程 (更新為 1 分鐘)
 	app.startSelfCheck()
 
 	http.HandleFunc("/", app.handleIndex)
@@ -778,11 +783,17 @@ func (a *App) getAPIResponseSnapshot() APIResponse {
 	}
 }
 
-// 🩺 startSelfCheck 啟動每 5 分鐘一次的全艦常駐自檢程序
+// 🩺 startSelfCheck 啟動每 1 分鐘一次的全艦常駐自檢程序
 func (a *App) startSelfCheck() {
-	ticker := time.NewTicker(5 * time.Minute)
 	go func() {
-		log.Println("[SYSTEM] 🩺 全艦 5 分鐘定時核心健康自檢雷達已成功上線！")
+		log.Println("[SYSTEM] 🩺 全艦 1 分鐘定時核心健康自檢雷達已成功上線！")
+		
+		// 🚀 啟動時立即跑一次自檢建立基準值
+		a.performSelfCheck()
+
+		ticker := time.NewTicker(1 * time.Minute)
+		defer ticker.Stop() 
+
 		for range ticker.C {
 			a.performSelfCheck()
 		}
@@ -812,28 +823,72 @@ func (a *App) performSelfCheck() {
 		saveDir := s.SaveDir
 		s.mu.Unlock()
 
-		if isRec && latestFile != "" {
-			fullPath := filepath.Join(saveDir, latestFile)
-			fi, err := os.Stat(fullPath)
-			if err == nil {
-				// 判定 A：錄影中，但該硬碟檔案修改時間（ModTime）超過 5 分鐘沒變動 -> 進程死鎖假死
-				if time.Since(fi.ModTime()) > 5*time.Minute {
-					log.Printf("[HEALTH-ERROR] ❌ 偵測到錄影卡死！頻道 @%s 已超過 5 分鐘無資料寫入。強制熔斷救援重連。", prefix)
-					s.mu.Lock()
-					if s.RecordCancel != nil {
-						s.RecordCancel() // 觸發 context.Done 徹底連根清空舊程序並啟動重錄
+		// 如果目前沒在錄影，順手清空檢測計數避免殘留舊狀態
+		if !isRec || latestFile == "" {
+			s.mu.Lock()
+			s.LastCheckFile = ""
+			s.LastCheckSize = 0
+			s.GrowthFailCnt = 0
+			s.mu.Unlock()
+			continue
+		}
+
+		// 常規增長自檢：讀取實際檔案大小
+		fullPath := filepath.Join(saveDir, latestFile)
+		fi, err := os.Stat(fullPath)
+		if err == nil {
+			currentSize := fi.Size()
+			modTimeStr := fi.ModTime().Format("2006-01-02 15:04:05")
+
+			s.mu.Lock()
+			// 順便為 Web UI 常規更新最新大小與時間
+			s.LatestSize = currentSize
+			s.LatestMTime = modTimeStr
+
+			// 1. 防禦換檔誤判：若發現正在檢查全新的檔案，先建立新基準
+			if s.LastCheckFile != latestFile {
+				s.LastCheckFile = latestFile
+				s.LastCheckSize = currentSize
+				s.GrowthFailCnt = 0
+			} else {
+				// 2. 🚀 精準零增長判定：只有完全卡死（增長量 <= 0）才視為異常
+				growth := currentSize - s.LastCheckSize
+				if growth <= 0 {
+					s.GrowthFailCnt++
+					log.Printf("[HEALTH-WARNING] ⚠️ 警告：頻道 @%s 檔案大小完全停滯，累計未達標次數: %d/2", prefix, s.GrowthFailCnt)
+
+					// 連續 2 次未達標 (約經過 2 分鐘)
+					if s.GrowthFailCnt >= 2 {
+						log.Printf("[HEALTH-ERROR] ❌ 確定卡死！頻道 @%s 檔案連續兩次無任何寫入，發動熔斷重錄。", prefix)
+						if s.RecordCancel != nil {
+							s.RecordCancel() 
+						}
+						// 同步清空追蹤欄位
+						s.LastCheckFile = ""
+						s.LastCheckSize = 0
+						s.GrowthFailCnt = 0
 					}
-					s.mu.Unlock()
-				} else if fi.Size() == 0 && time.Since(fi.ModTime()) > 2*time.Minute {
-					// 判定 B：錄影成立已超過 2 分鐘，但檔案大小持續為 0 Byte -> 下載無效錄製
-					log.Printf("[HEALTH-ERROR] ❌ 偵測到無效錄製！頻道 @%s 檔案大小持續為 0 Byte。主動重置線路。", prefix)
-					s.mu.Lock()
-					if s.RecordCancel != nil {
-						s.RecordCancel()
-					}
-					s.mu.Unlock()
+				} else {
+					// 檔案健康增長中
+					s.GrowthFailCnt = 0
+					s.LastCheckSize = currentSize
 				}
 			}
+			s.mu.Unlock()
+		} else {
+			// os.Stat 失敗（檔案被刪除等）
+			s.mu.Lock()
+			s.GrowthFailCnt++
+			if s.GrowthFailCnt >= 2 {
+				log.Printf("[HEALTH-ERROR] ❌ 找不到檔案：頻道 @%s 錄影檔無法讀取狀態，主動重置線路。", prefix)
+				if s.RecordCancel != nil {
+					s.RecordCancel()
+				}
+				s.LastCheckFile = ""
+				s.LastCheckSize = 0
+				s.GrowthFailCnt = 0
+			}
+			s.mu.Unlock()
 		}
 	}
 }
@@ -1518,7 +1573,6 @@ const htmlTemplate = `<!DOCTYPE html>
                 .then(r => r.json())
                 .then(d => {
                     if(d.status === "success") {
-                        // 自動幫忙打開日誌視窗，方便直接閱讀
                         openLogViewer();
                     }
                 })
@@ -1661,4 +1715,3 @@ const htmlTemplate = `<!DOCTYPE html>
 </body>
 </html>
 `
-
