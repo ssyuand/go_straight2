@@ -1,168 +1,271 @@
-# 🎥 Live Recorder - Go Straight² / Multi-Radar Edition
+# 🎥 Live Recorder / Go Straight²
 
-基於 **Unix / Suckless Philosophy** 打造的極簡多頻道直播錄製守護進程（Daemon）。
+一個專為 **24/7 無人值守直播錄製** 設計的極簡守護程序。
 
-專為：
+基於 Go 實作。
 
-* 1~N 路直播長期監控
-* 雙主播同步錄製
-* 24/7 無人值守運行
+單 Binary 部署。
 
-而設計。
+無資料庫。
 
----
+無外部服務。
 
-## 核心開發準則
-
-不造多餘的輪子。
-
-不依賴肥大的框架。
-
-不寫無意義的狀態檔。
-
-不把記憶體問題丟給硬碟。
-
-一切向 Linux Kernel 借力。
+無額外狀態檔。
 
 ---
 
-過去需要：
+## 設計理念
 
-* 多個 Shell Script
-* Cron
-* 額外監控程序
-* 外部 API
-* 多份設定檔
-
-才能完成的工作。
-
-現在全部收攏於：
+遵循 Unix Philosophy：
 
 ```text
-main.go
+Keep It Simple.
+Keep It Running.
 ```
 
-單一 Binary。
+系統負責：
+
+```text
+偵測
+↓
+錄製
+↓
+監控
+↓
+自癒
+```
+
+而不是堆疊大量依賴。
 
 ---
 
-## 🚀 Go Straight² 的進化
+## 核心能力
 
-相較於初代版本：
+### 📡 多頻道獨立雷達
 
-```text
-單主播
-↓
-單雷達
-↓
-單錄影核心
-```
-
-Go Straight² 已升級為：
+每個主播皆擁有完全隔離的：
 
 ```text
-多主播
+Probe Radar
 ↓
-多雷達
+Record Engine
 ↓
-多錄影核心
+State Machine
 ↓
-完全隔離運行
+Health Monitor
 ```
 
-每個主播皆擁有獨立：
+互不干擾。
 
-* Probe Radar
-* Record Engine
-* State Machine
-* Hot Reload Channel
-
-互不影響。
-
-即使：
+即使某一路錄製異常：
 
 ```text
-@aaa 開播
+@aaa
 ```
 
-正在錄影。
-
-也不會阻塞：
+也不會影響：
 
 ```text
 @bbb
 @ccc
 ```
 
-的偵測與錄製。
+正常運作。
 
 ---
 
-## 🎯 設計目標
+### 🎬 自動錄製
 
-打造一套：
+偵測開播後自動建立錄製管線：
 
 ```text
-低資源
-低維護
-低依賴
-高穩定
+streamlink
+     ↓
+   pipe
+     ↓
+ ffmpeg
+     ↓
+   .ts
 ```
 
-的直播錄製系統。
+支援：
 
-適合：
+- TikTok Live
+- Streamlink 支援之平台
 
-* TikTok Live
-* 長時間直播監控
-* 私人錄播伺服器
-* NAS
-* Linux Server
-* Mini PC
+---
 
-長期掛機使用。
+### 🩺 工業級健康檢查
+
+背景常駐健康雷達：
+
+```text
+每分鐘
+↓
+檢查錄影檔增長
+↓
+偵測卡死
+↓
+自動熔斷
+↓
+重新接管錄製
+```
+
+避免：
+
+- Streamlink 卡死
+- FFmpeg 假存活
+- 檔案停止增長
+- 長時間空轉
+
+---
+
+### 🔥 自動自癒
+
+當錄影管線異常中斷：
+
+```text
+錄影斷開
+↓
+二次確認直播狀態
+↓
+仍在線
+↓
+立即重錄
+```
+
+主播不需要重新開播。
+
+系統自行接回。
+
+---
+
+### 🔄 Config 熱載入
+
+修改：
+
+```json
+config.json
+```
+
+後無需重啟服務。
+
+新設定自動同步至所有雷達。
+
+---
+
+### 🌐 Web Dashboard
+
+內建控制台：
+
+```text
+http://localhost:PORT
+```
+
+可查看：
+
+- 即時錄製狀態
+- 最新錄影檔
+- 檔案大小
+- CPU 使用率
+- RAM 使用率
+- 磁碟空間
+- 即時日誌
+
+---
+
+### ⚡ Web API
+
+提供控制介面：
+
+```text
+/api/status
+/api/probe
+/api/restart
+/api/restart_cluster
+/api/shutdown
+/api/logs
+```
+
+支援：
+
+- 手動刺探
+- 單頻道重啟
+- 全艦重啟
+- 安全關閉
+- 狀態查詢
 
 ---
 
 ## 系統架構
 
 ```text
-          ┌──────────────┐
-          │ config.json  │
-          └──────┬───────┘
-                 │
-                 ▼
+                 config.json
+                       │
+                       ▼
 
-        ┌──────────────────┐
-        │   Go Straight²   │
-        │ Master Control   │
-        └────────┬─────────┘
-                 │
+              Go Straight² Core
+                       │
+        ┌──────────────┼──────────────┐
+        ▼              ▼              ▼
 
-      ┌──────────┼──────────┐
-      ▼          ▼          ▼
+     Channel A      Channel B      Channel C
+        │              │              │
 
-   Radar A    Radar B    Radar C
-      │          │          │
-      ▼          ▼          ▼
+   Probe Radar    Probe Radar    Probe Radar
+        │              │              │
 
- Record A   Record B   Record C
-      │          │          │
-      ▼          ▼          ▼
+  Record Engine  Record Engine  Record Engine
+        │              │              │
 
- streamlink streamlink streamlink
-      │          │          │
-      ▼          ▼          ▼
+ Health Monitor Health Monitor Health Monitor
+        │              │              │
 
-   ffmpeg     ffmpeg     ffmpeg
-      │          │          │
-      ▼          ▼          ▼
+    streamlink     streamlink     streamlink
+        │              │              │
 
-    .ts         .ts        .ts
+      ffmpeg         ffmpeg         ffmpeg
+        │              │              │
+
+       .ts            .ts            .ts
 ```
+
+---
+
+## 適用場景
+
+- TikTok Live 長期監控
+- 錄播伺服器
+- NAS
+- Linux Server
+- Mini PC
+- VPS
+- 家用錄播機
+
+---
+
+## 特性
+
+✅ 單 Binary
+
+✅ 多頻道並發
+
+✅ 自動錄製
+
+✅ 自動重錄
+
+✅ 熱載入設定
+
+✅ Web Dashboard
+
+✅ 健康自檢
+
+✅ 卡死自癒
+
+✅ 24/7 無人值守
 
 ---
 
 ## 一句話總結
 
-> 一個 Binary，多個雷達，多個錄影核心，24/7 自動監控與錄製。
+> 一個 Binary，一套控制台，多個獨立錄影核心，自動監控、自動錄製、自動自癒，為長期 24/7 掛機而生。
