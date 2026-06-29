@@ -1,40 +1,29 @@
 ```text
-        ┌──────────────────────────────────────┐
-        │                                      │
-        ▼                                      │
-┌────────────────┐                             │
-│ Detect Live    │                             │
-│ Probe Scheduler│                             │
-└───────┬────────┘                             │
-        │                                      │
-        ▼                                      │
-   Stream Live ?                               │
-   ┌────┴────┐                                 │
-   │         │                                 │
-  No        Yes                                │
-   │         │                                 │
-   │         ▼                                 │
-   │  ┌───────────────┐                        │
-   │  │ Record Stream │                        │
-   │  │ streamlink    │                        │
-   │  │     ↓         │                        │
-   │  │   ffmpeg      │                        │
-   │  └──────┬────────┘                        │
-   │         │                                 │
-   │         ▼                                 │
-   │  ┌───────────────┐                        │
-   │  │ Verify Health │                        │
-   │  │ File Growth   │                        │
-   │  └──────┬────────┘                        │
-   │         │                                 │
-   │    Healthy ?                              │
-   │    ┌───┴────┐                             │
-   │    │        │                             │
-   │   Yes      No                             │
-   │    │        │                             │
-   │    │   Cancel Recording                   │
-   │    │        │                             │
-   └────┴────────┴─────────────────────────────┘
+                         Supervisor Loop
+
+ Probe ─────► Recording Pipeline ─────► Monitor
+                │                           │
+                │                           │
+                ▼                           │
+         streamlink                         │
+                │                           │
+                ▼                           │
+             ffmpeg                         │
+                │                           │
+                ▼                           │
+            Recording File                  │
+                                            │
+                    Healthy ?───────────────┤
+                        │                   │
+                      Yes                  No
+                        │                   │
+                        └────Continue───────┘
+                            │
+                            ▼
+                     Restart Pipeline
+                            │
+                            ▼
+                          Probe
 ```
 ## 🛠️ 快速操作手冊
 
