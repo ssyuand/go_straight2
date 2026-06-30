@@ -161,6 +161,11 @@ pip install streamlink
 # 4. 把工具箱關起來 (裝完就好了)
 deactivate
 
+# 5. build
+go build -ldflags="-s -w" -o livetool .
+
+
+
 ## 核心指令
 ./launcher.sh start   # 啟動系統 (清空舊進程，將雷達與 Web 丟入背景)
 ./launcher.sh status  # 打開動態監控儀表板 (按 Ctrl+C 退出面板，不影響背景錄影)
