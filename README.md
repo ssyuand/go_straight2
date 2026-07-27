@@ -3,13 +3,17 @@
 ### 安裝依賴
 
 ```bash
+# 首次下載
+git clone https://github.com/ssyuand/go_straight2.git
+cd go_straight2
+
+# macOS（Homebrew）
+brew install go ffmpeg
+
 python3 -m venv venv
 source venv/bin/activate
 pip install streamlink
 deactivate
-
-# macOS（Homebrew）
-brew install ffmpeg
 ```
 
 ### 安裝與操作
@@ -21,6 +25,18 @@ brew install ffmpeg
 ./scripts/manage-launchd.sh stop
 ./scripts/manage-launchd.sh restart
 ```
+
+`install` 會自動建置、安裝並啟動服務，不需要再手動執行 `./livetool`。
+
+### Web 登入驗證
+
+第一次啟動會自動建立 `auth.json`，產生隨機管理員密碼。使用以下指令查看首次登入資料：
+
+```bash
+rg "INITIAL CREDENTIALS" livetool.log | tail -n 1
+```
+
+預設帳號為 `admin`。`auth.json` 只保存加鹽密碼雜湊，且已排除 Git；每台新電腦第一次啟動都會產生不同密碼。控制台、API、設定、診斷與錄影檔下載皆需要登入，右上角 `LOGOUT` 可清除目前 Session。
 
 ### macOS 自動恢復與防睡眠
 
