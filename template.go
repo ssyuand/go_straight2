@@ -30,6 +30,7 @@ const htmlTemplate = `<!DOCTYPE html>
         .header-title-area { display: flex; flex-direction: row; align-items: center; justify-content: space-between; gap: 24px; width: 100%; flex-wrap: wrap; }
         h2 { margin: 0; font-size: 20px; font-weight: 800; color: var(--accent-lavender); letter-spacing: -0.5px; line-height: 1.3; white-space: nowrap; }
         .header-btn-group { display: flex; gap: 10px; width: auto; flex-wrap: wrap; justify-content: flex-end; margin-left: auto; }
+		.logout-form { display: contents; margin: 0; }
         .btn-mini { flex: none; min-width: 80px; padding: 12px; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.2s; border: 1px solid transparent; text-align: center; }
         .btn-mini-log { 
             background: rgba(166, 227, 161, 0.12); 
@@ -52,6 +53,18 @@ const htmlTemplate = `<!DOCTYPE html>
         .btn-mini-danger:active { background: var(--accent-red); color: #11111b; }
 
         .monitor-grid { margin-bottom: 25px; }
+		.selfcheck-strip { margin-top: 10px; padding: 10px 12px; display: flex; gap: 12px; align-items: center; justify-content: space-between; border: 1px solid var(--border-color); border-radius: 8px; background: rgba(0,0,0,.18); font: 11px monospace; }
+		.selfcheck-strip.pass { border-color: rgba(166,227,161,.35); color: var(--accent-green); }
+		.selfcheck-strip.fail { border-color: rgba(243,139,168,.4); color: var(--accent-red); }
+		.selfcheck-strip.running { border-color: rgba(250,179,135,.35); color: var(--accent-orange); }
+		.selfcheck-detail { color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .alert-center { display: none; margin-bottom: 14px; border: 1px solid rgba(250,179,135,.35); background: rgba(250,179,135,.07); border-radius: 10px; padding: 10px; }
+        .alert-center.active { display: block; }
+        .alert-head { display: flex; justify-content: space-between; color: var(--accent-orange); font-size: 11px; font-weight: 900; margin-bottom: 7px; }
+        .alert-list { display: flex; flex-direction: column; gap: 5px; }
+        .alert-item { padding: 6px 8px; border-radius: 6px; background: rgba(0,0,0,.18); color: var(--text-main); font: 11px monospace; }
+        .alert-item.error { color: var(--accent-red); border-left: 3px solid var(--accent-red); }
+        .alert-item.warning { color: var(--accent-orange); border-left: 3px solid var(--accent-orange); }
         .system-panel { background: #11111b; border: 1px solid var(--border-color); border-radius: 14px; padding: 12px; box-shadow: 0 8px 28px rgba(0,0,0,0.28); position: relative; overflow: hidden; }
         .system-panel::before { content: ""; position: absolute; inset: 0; pointer-events: none; background: radial-gradient(circle at top left, rgba(137,180,250,0.08), transparent 34%), radial-gradient(circle at bottom right, rgba(166,227,161,0.06), transparent 38%); }
         .panel-head { position: relative; display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; color: var(--text-muted); font-size: 12px; font-family: monospace; font-weight: 800; letter-spacing: 0.5px; }
@@ -87,7 +100,6 @@ const htmlTemplate = `<!DOCTYPE html>
         .channel-grid { display: grid; grid-template-columns: 1fr; gap: 15px; margin-bottom: 30px; }
         .channel-box { background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 12px; padding: 15px; display: flex; flex-direction: column; justify-content: flex-start; position: relative; box-shadow: 0 4px 15px rgba(0,0,0,0.15); min-width: 0; width: 100%; box-sizing: border-box; }
         .channel-box.recording { border-color: rgba(243, 139, 168, 0.5); background: linear-gradient(145deg, #241b2f, #181825); box-shadow: 0 0 20px rgba(243, 139, 168, 0.1); }
-        .channel-box.recording { border-color: rgba(243, 139, 168, 0.5); background: linear-gradient(145deg, #241b2f, #181825); box-shadow: 0 0 20px rgba(243, 139, 168, 0.1); }
         .channel-main { flex: 0 0 auto; }
         .channel-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
         .channel-name { font-weight: 700; font-size: 16px; color: var(--text-main); word-break: break-all; padding-right: 10px; }
@@ -98,6 +110,13 @@ const htmlTemplate = `<!DOCTYPE html>
         @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
 
         .channel-body { background: rgba(0,0,0,0.25); border-radius: 8px; padding: 10px; font-size: 13px; font-family: monospace; min-height: 76px; display: flex; flex-direction: column; justify-content: center; border: 1px solid rgba(255,255,255,0.02); }
+        .channel-metrics { margin-top: 10px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; font-family: monospace; }
+        .metric-cell { min-width: 0; padding: 7px 8px; background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.04); border-radius: 6px; }
+        .metric-label { display: block; color: var(--text-muted); font-size: 9px; letter-spacing: .06em; margin-bottom: 3px; }
+        .metric-value { display: block; color: var(--text-main); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .metric-error { grid-column: 1 / -1; border-color: rgba(243,139,168,.22); display: none; }
+        .metric-error.has-error { display: block; }
+        .metric-error .metric-value { color: var(--accent-red); }
         .probe-msg { color: var(--text-muted); line-height: 1.5; word-break: break-all; }
         .probe-scan { display: none; width: 100%; }
         .probe-scan-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
@@ -118,22 +137,75 @@ const htmlTemplate = `<!DOCTYPE html>
         .sleep-countdown { display: none; width: 100%; }
         .sleep-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
         .sleep-label { color: var(--accent-green); font-size: 11px; font-weight: 900; letter-spacing: .7px; display: inline-flex; align-items: center; gap: 6px; }
-        .sleep-time { color: var(--accent-green); font-size: 19px; font-weight: 900; letter-spacing: -.4px; white-space: nowrap; }
-        .sleep-track { position: relative; height: 10px; border-radius: 6px; overflow: hidden; background: #0b0b12; border: 1px solid rgba(57,211,83,.18); box-shadow: inset 0 0 10px rgba(0,0,0,.45); }
-        .sleep-fill { height: 100%; width: 0%; border-radius: 6px; background-color: #39d353; background-image: repeating-linear-gradient(90deg, rgba(255,255,255,.14) 0 1px, transparent 1px 9px); box-shadow: 0 0 12px rgba(57,211,83,.28); transition: width .45s ease; }
+        .sleep-state { color: var(--accent-green); font-size: 9px; font-weight: 900; letter-spacing: .08em; }
+		.sleep-countdown.paused .sleep-label, .sleep-countdown.paused .sleep-state { color: var(--accent-orange); }
+		.cooldown-layout { display: flex; flex-direction: column; align-items: center; width: 100%; }
+		.cooldown-stage { position: relative; width: min(100%, 270px); min-height: 166px; display: grid; place-items: center; }
+		.cooldown-ring { --progress: 0deg; width: 148px; height: 148px; border-radius: 50%; display: grid; place-items: center; position: relative; background: conic-gradient(from -90deg, var(--accent-green) var(--progress), rgba(255,255,255,.065) 0); box-shadow: 0 0 0 1px rgba(166,227,161,.14), 0 0 28px rgba(57,211,83,.17), inset 0 0 24px rgba(57,211,83,.07); transition: background .4s linear, box-shadow .3s; }
+		.cooldown-ring::before { content: ""; position: absolute; inset: 10px; border-radius: 50%; background: radial-gradient(circle at 50% 38%, rgba(166,227,161,.09), transparent 47%), #0d0d16; border: 1px solid rgba(255,255,255,.08); box-shadow: inset 0 0 26px rgba(0,0,0,.65); }
+		.cooldown-ring::after { content: ""; position: absolute; inset: 3px; border-radius: 50%; background: repeating-conic-gradient(from -90deg, rgba(255,255,255,.4) 0deg 1deg, transparent 1deg 9deg); mask: radial-gradient(transparent 0 65px, #000 66px); opacity: .28; }
+		.sleep-countdown.paused .cooldown-ring { background: conic-gradient(from -90deg, var(--accent-orange) var(--progress), rgba(255,255,255,.065) 0); box-shadow: 0 0 0 1px rgba(250,179,135,.18), 0 0 28px rgba(250,179,135,.17); }
+		.cooldown-ring-core { position: relative; z-index: 1; text-align: center; }
+		.sleep-time { display: block; color: var(--accent-green); font-size: 27px; font-weight: 900; letter-spacing: -1.2px; white-space: nowrap; text-shadow: 0 0 14px rgba(166,227,161,.35); }
+		.sleep-countdown.paused .sleep-time { color: var(--accent-orange); }
+		.cooldown-unit { display: block; margin-top: 5px; color: var(--text-muted); font-size: 7px; letter-spacing: .13em; }
+		.cooldown-detail { min-width: 0; width: min(100%, 310px); margin-top: 2px; }
+		.cooldown-controls { position: absolute; inset: 0; pointer-events: none; }
+		.cooldown-btn { position: absolute; top: 55px; width: 43px; height: 43px; padding: 0; border-radius: 50%; border: 1px solid rgba(137,180,250,.38); background: radial-gradient(circle at 35% 30%, rgba(137,180,250,.22), rgba(137,180,250,.07)); color: var(--accent-blue); font: 800 7px monospace; letter-spacing: .04em; cursor: pointer; pointer-events: auto; box-shadow: 0 5px 14px rgba(0,0,0,.32), inset 0 0 0 3px rgba(0,0,0,.18); transition: transform .18s, box-shadow .18s, opacity .18s; }
+		.cooldown-btn:hover:not(:disabled) { transform: translateY(-2px) scale(1.04); box-shadow: 0 7px 20px rgba(137,180,250,.2); }
+		.cooldown-btn.pause { left: 5px; color: var(--accent-orange); border-color: rgba(250,179,135,.42); background: radial-gradient(circle at 35% 30%, rgba(250,179,135,.22), rgba(250,179,135,.07)); }
+		.cooldown-btn.start { right: 5px; }
+		.cooldown-btn:disabled { opacity: .22; cursor: default; filter: grayscale(.5); }
         .sleep-sub { margin-top: 7px; color: var(--text-muted); font-size: 11px; display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
         .sleep-sub span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .live-vitals { display: none; width: 100%; }
         .live-vitals-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
         .live-vitals-label { color: var(--accent-green); font-size: 11px; font-weight: 900; letter-spacing: .7px; display: inline-flex; align-items: center; gap: 6px; }
         .live-vitals-label::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--accent-green); box-shadow: 0 0 10px rgba(166,227,161,.75); animation: dotPulse 1.2s infinite; }
+        .live-health { margin-left: 6px; padding: 2px 6px; border-radius: 5px; font-size: 9px; letter-spacing: .5px; border: 1px solid rgba(166,227,161,.3); color: var(--accent-green); background: rgba(166,227,161,.08); }
+        .live-health.starting, .live-health.delayed { color: var(--accent-orange); border-color: rgba(250,179,135,.35); background: rgba(250,179,135,.08); }
+        .live-health.stale { color: var(--accent-red); border-color: rgba(243,139,168,.4); background: rgba(243,139,168,.1); }
         .live-speed { color: var(--accent-green); font-size: 18px; font-weight: 900; letter-spacing: -.4px; white-space: nowrap; }
-        .ecg-wrap { height: 46px; border-radius: 8px; overflow: hidden; background: linear-gradient(rgba(166,227,161,.06) 1px, transparent 1px), linear-gradient(90deg, rgba(166,227,161,.06) 1px, transparent 1px), rgba(0,0,0,.22); background-size: 100% 12px, 18px 100%, auto; border: 1px solid rgba(166,227,161,.15); }
-        .ecg-svg { width: 100%; height: 46px; display: block; }
-        .ecg-line { fill: none; stroke: var(--accent-green); stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; filter: drop-shadow(0 0 5px rgba(166,227,161,.65)); }
+		.throughput-wrap { position: relative; height: 124px; box-sizing: border-box; border-radius: 10px; overflow: hidden; background: linear-gradient(rgba(166,227,161,.075) 1px, transparent 1px), linear-gradient(90deg, rgba(137,180,250,.06) 1px, transparent 1px), radial-gradient(circle at 50% 110%, rgba(137,180,250,.12), transparent 62%), #090b12; background-size: 100% 24px, 32px 100%, auto, auto; border: 1px solid rgba(166,227,161,.2); box-shadow: inset 0 0 25px rgba(0,0,0,.5), 0 0 18px rgba(166,227,161,.055); }
+		.throughput-wrap::after { content: ""; position: absolute; top: -20%; bottom: -20%; width: 28%; left: -35%; z-index: 4; pointer-events: none; background: linear-gradient(90deg, transparent, rgba(166,227,161,.08), transparent); animation: throughputScan 3.6s linear infinite; }
+		.throughput-wave { position: absolute; inset: 8px 8px 20px; z-index: 2; width: calc(100% - 16px); height: calc(100% - 28px); overflow: visible; }
+		.throughput-area { fill: rgba(137,180,250,.11); }
+		.throughput-line-glow { fill: none; stroke: rgba(166,227,161,.3); stroke-width: 7; filter: blur(3px); }
+		.throughput-line { fill: none; stroke: var(--accent-green); stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+		.throughput-bars { position: absolute; left: 8px; right: 8px; bottom: 5px; height: 27px; z-index: 1; display: flex; align-items: flex-end; gap: 2px; opacity: .58; }
+		.throughput-bar { flex: 1 1 0; min-width: 2px; height: 3%; border-radius: 2px 2px 0 0; background: linear-gradient(to top, rgba(137,180,250,.25), rgba(166,227,161,.72)); transition: height .45s ease, opacity .45s ease; box-shadow: 0 0 5px rgba(166,227,161,.16); }
+		.throughput-hud { position: absolute; top: 7px; left: 9px; right: 9px; z-index: 3; display: flex; justify-content: space-between; color: rgba(205,214,244,.55); font: 7px monospace; letter-spacing: .08em; pointer-events: none; }
+		@keyframes throughputScan { from { left: -35%; } to { left: 110%; } }
+        .throughput-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--text-muted); font: 10px monospace; letter-spacing: .08em; background: rgba(0,0,0,.2); }
+        .throughput-empty.hidden { display: none; }
         .live-vitals-sub { margin-top: 6px; color: var(--text-muted); font-size: 11px; display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
         .live-vitals-sub span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .live-file { max-width: 62%; }
+		.integrity-card { margin-top: 9px; padding: 9px; border-radius: 8px; border: 1px solid rgba(137,180,250,.25); background: linear-gradient(135deg, rgba(137,180,250,.08), rgba(166,227,161,.045)); }
+		.integrity-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+		.integrity-title { color: var(--accent-blue); font-size: 9px; font-weight: 900; letter-spacing: .08em; }
+		.integrity-score { color: var(--accent-green); font-size: 20px; font-weight: 900; }
+		.integrity-card.warning .integrity-score { color: var(--accent-orange); }
+		.integrity-card.danger .integrity-score { color: var(--accent-red); }
+		.integrity-track { height: 5px; margin: 7px 0; overflow: hidden; border-radius: 4px; background: rgba(0,0,0,.35); }
+		.integrity-fill { height: 100%; width: 100%; background: var(--accent-green); transition: width .4s ease; }
+		.integrity-card.warning .integrity-fill { background: var(--accent-orange); }
+		.integrity-card.danger .integrity-fill { background: var(--accent-red); }
+		.integrity-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 6px; }
+		.integrity-stat span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+		.integrity-stat-label { color: var(--text-muted); font-size: 7px; letter-spacing: .05em; }
+		.integrity-stat-value { margin-top: 2px; color: var(--text-main); font-size: 10px; font-weight: 700; }
+        .pipeline-grid { margin-top: 8px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; }
+        .pipeline-item { min-width: 0; padding: 6px 7px; border-radius: 6px; background: rgba(0,0,0,.2); border: 1px solid rgba(166,227,161,.09); }
+        .pipeline-label { display: block; color: var(--text-muted); font-size: 8px; letter-spacing: .06em; margin-bottom: 2px; }
+        .pipeline-value { display: block; color: var(--text-main); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+		.pipeline-watchdog { grid-column: 1 / -1; border-color: rgba(166,227,161,.25); }
+		.pipeline-watchdog .pipeline-value { color: var(--accent-green); font-weight: 800; }
+		.pipeline-watchdog.starting, .pipeline-watchdog.delayed { border-color: rgba(250,179,135,.4); background: rgba(250,179,135,.07); }
+		.pipeline-watchdog.starting .pipeline-value, .pipeline-watchdog.delayed .pipeline-value { color: var(--accent-orange); }
+		.pipeline-watchdog.stalled { border-color: rgba(243,139,168,.5); background: rgba(243,139,168,.09); }
+		.pipeline-watchdog.stalled .pipeline-value { color: var(--accent-red); }
+        .pipeline-processes { grid-column: 1 / -1; display: flex; justify-content: space-between; gap: 8px; }
         .history-block { margin-top: 12px; border-top: 1px solid var(--border-color); padding-top: 10px; flex: 0 0 auto; }
         .history-title { color: var(--text-muted); font-size: 12px; font-weight: 700; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; }
         .history-count { color: var(--accent-blue); font-family: monospace; font-size: 11px; }
@@ -142,8 +214,11 @@ const htmlTemplate = `<!DOCTYPE html>
         .history-item.row-growing { border-color: rgba(166, 227, 161, 0.45); background: rgba(166, 227, 161, 0.06); }
         .history-link { color: var(--accent-blue); text-decoration: none; font-size: 12px; font-family: monospace; font-weight: 700; word-break: break-all; line-height: 1.4; display: flex; align-items: flex-start; gap: 6px; }
         .history-meta { margin-top: 5px; color: var(--text-muted); font-size: 11px; font-family: monospace; display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+        .quality-badge { display: inline-flex; margin-top: 5px; padding: 2px 5px; border-radius: 4px; font: 9px monospace; color: var(--accent-green); border: 1px solid rgba(166,227,161,.25); }
+        .quality-badge.BROKEN, .quality-badge.WARNING { color: var(--accent-red); border-color: rgba(243,139,168,.35); }
         .history-empty { color: var(--text-muted); font-size: 12px; background: rgba(0,0,0,0.18); border: 1px dashed var(--border-color); border-radius: 8px; padding: 10px; text-align: center; }
-        .channel-actions { margin-top: auto; padding-top: 12px; display: flex; justify-content: stretch; }
+        .channel-actions { margin-top: auto; padding-top: 12px; display: flex; justify-content: stretch; gap: 8px; }
+        .channel-actions .btn { margin-top: 0; }
 
         .btn { width: 100%; padding: 12px; border-radius: 8px; font-size: 14px; font-weight: 700; cursor: pointer; transition: all 0.2s; border: 1px solid transparent; margin-top: 12px; letter-spacing: .2px; }
         .btn-probe { background: rgba(137,180,250,.10); color: var(--accent-blue); border-color: rgba(137,180,250,.32); }
@@ -179,6 +254,30 @@ const htmlTemplate = `<!DOCTYPE html>
         .log-title { font-weight: bold; color: var(--accent-lavender); font-size: 15px; display: flex; align-items: center; gap: 8px; }
         .log-close { background: rgba(243, 139, 168, 0.2); color: var(--accent-red); border: 1px solid rgba(243, 139, 168, 0.4); padding: 6px 14px; border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 13px; }
         .log-body { flex: 1; padding: 15px; overflow-y: auto; font-family: 'Courier New', Courier, monospace; font-size: 12px; line-height: 1.5; color: #a6e3a1; white-space: pre-wrap; word-break: break-all; scroll-behavior: smooth; }
+        .log-filters { padding: 9px 15px; display: grid; grid-template-columns: 90px 1fr 1.5fr auto; gap: 7px; border-bottom: 1px solid var(--border-color); }
+        .log-filters input, .log-filters select { min-width: 0; background: #11111b; color: var(--text-main); border: 1px solid var(--border-color); border-radius: 5px; padding: 6px; font: 11px monospace; }
+        .detail-body { flex: 1; overflow: auto; padding: 15px; color: var(--text-main); font: 12px monospace; }
+        .detail-summary { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 7px; margin-bottom: 14px; }
+        .detail-cell { padding: 8px; border-radius: 6px; background: rgba(0,0,0,.2); border: 1px solid var(--border-color); overflow: hidden; text-overflow: ellipsis; }
+        .settings-form { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
+        .settings-field { min-width: 0; display: flex; flex-direction: column; gap: 5px; color: var(--text-muted); font: 10px monospace; }
+        .settings-field.full { grid-column: 1 / -1; }
+        .settings-field input, .settings-field textarea { width: 100%; box-sizing: border-box; background: #11111b; color: var(--text-main); border: 1px solid var(--border-color); border-radius: 6px; padding: 9px; font: 12px monospace; }
+        .settings-field textarea { min-height: 110px; resize: vertical; }
+        .settings-note { grid-column: 1 / -1; color: var(--accent-orange); font: 10px monospace; }
+        .settings-actions { grid-column: 1 / -1; display: flex; justify-content: flex-end; gap: 8px; }
+        .trend-chart { width: 100%; height: 100px; background: rgba(0,0,0,.2); border: 1px solid var(--border-color); border-radius: 7px; margin-bottom: 14px; }
+        .event-list { display: flex; flex-direction: column; gap: 6px; }
+        .event-row { padding: 7px; border-left: 3px solid var(--accent-blue); background: rgba(0,0,0,.18); }
+        .event-row.error { border-color: var(--accent-red); }
+        .event-row.warning { border-color: var(--accent-orange); }
+		@media (max-width: 600px) {
+			.log-filters { grid-template-columns: 1fr 1fr; }
+			.settings-form { grid-template-columns: 1fr; }
+			.settings-field.full, .settings-note, .settings-actions { grid-column: 1; }
+			.header-btn-group { justify-content: flex-start; margin-left: 0; }
+			.btn-mini { min-width: 0; padding: 9px 10px; font-size: 11px; }
+		}
 
         @media (min-width: 768px) {
             body { padding: 30px; }
@@ -219,12 +318,20 @@ const htmlTemplate = `<!DOCTYPE html>
                 <h2>go_straight Console</h2>
                 <div class="header-btn-group">
                     <button onclick="openLogViewer()" class="btn-mini btn-mini-log">LOGS</button>
+                    <button onclick="openSettings()" class="btn-mini btn-mini-status">SETTINGS</button>
+                    <a href="/api/diagnostics" class="btn-mini btn-mini-status" style="text-decoration:none">DIAGNOSTICS</a>
                     <button onclick="logCurrentStatus()" class="btn-mini btn-mini-status">CHECK</button>
                     <button onclick="restartCluster()" class="btn-mini btn-mini-restart">RESTART</button>
                     <button onclick="shutdownCluster()" class="btn-mini btn-mini-danger">SHUTDOWN</button>
+					<form class="logout-form" method="post" action="/logout"><button type="submit" class="btn-mini btn-mini-status">LOGOUT</button></form>
                 </div>
             </div>
         </header>
+
+        <div id="alertCenter" class="alert-center">
+            <div class="alert-head"><span>ACTIVE ALERTS</span><span id="alertCount">0</span></div>
+            <div id="alertList" class="alert-list"></div>
+        </div>
 
         <div class="monitor-grid">
             <div class="system-panel">
@@ -239,7 +346,7 @@ const htmlTemplate = `<!DOCTYPE html>
                                 <span id="cpuText" class="btop-value green">--</span>
                             </div>
                             <div class="btop-meter"><div id="cpuBarFill" class="btop-fill green"></div></div>
-                            <div class="btop-terminal"><span class="ok">●</span> probe / record / web server running</div>
+                            <div id="systemConnection" class="btop-terminal"><span class="ok">●</span> probe / record / web server running</div>
                         </div>
                         <div class="btop-sub">
                             <span>load source: /proc/stat</span>
@@ -291,6 +398,10 @@ const htmlTemplate = `<!DOCTYPE html>
                         </div>
                     </div>
                 </div>
+				<div id="pipelineSelfCheck" class="selfcheck-strip running">
+					<span><b>RECORDING PIPELINE SELF-TEST</b> · <span class="selfcheck-status">RUNNING</span></span>
+					<span class="selfcheck-detail">Streamlink → pipe → FFmpeg → TS → ffprobe</span>
+				</div>
             </div>
         </div>
 
@@ -331,29 +442,78 @@ const htmlTemplate = `<!DOCTYPE html>
                         <div class="sleep-countdown">
                             <div class="sleep-head">
                                 <span class="sleep-label">SLEEP TIMER</span>
-                                <span class="sleep-time">--:--:--</span>
+								<span class="sleep-state">RUNNING</span>
                             </div>
-                            <div class="sleep-track"><div class="sleep-fill"></div></div>
-                            <div class="sleep-sub">
-                                <span class="sleep-mode">outside battle window</span>
-                                <span class="sleep-percent">-- remaining</span>
-                            </div>
+							<div class="cooldown-layout">
+								<div class="cooldown-stage">
+									<div class="cooldown-ring"><div class="cooldown-ring-core"><span class="sleep-time">--:--</span><span class="cooldown-unit">UNTIL NEXT PROBE</span></div></div>
+									<div class="cooldown-controls">
+										<button type="button" class="cooldown-btn pause" onclick="setProbePaused(this, true)" title="Pause automatic probes">PAUSE</button>
+										<button type="button" class="cooldown-btn start" onclick="setProbePaused(this, false)" title="Resume automatic probes" disabled>START</button>
+									</div>
+								</div>
+								<div class="cooldown-detail">
+									<div class="sleep-sub"><span class="sleep-mode">outside battle window</span><span class="sleep-percent">-- remaining</span></div>
+								</div>
+							</div>
                         </div>
                         <div class="live-vitals" {{if $state.IsRecording}}style="display:block"{{end}}>
                             <div class="live-vitals-head">
-                                <span class="live-vitals-label">WRITE PULSE</span>
+                                <span class="live-vitals-label">LIVE THROUGHPUT <span class="live-health starting">STARTING</span></span>
                                 <span class="live-speed">-- MB/s</span>
                             </div>
-                            <div class="ecg-wrap">
-                                <svg class="ecg-svg" viewBox="0 0 240 46" preserveAspectRatio="none">
-                                    <polyline class="ecg-line" points="0,38 30,38 42,14 54,38 84,38 96,22 108,38 150,38 162,10 174,38 240,38"></polyline>
-                                </svg>
+                            <div class="throughput-wrap">
+								<div class="throughput-hud"><span class="throughput-average">AVG --</span><span class="throughput-peak">PEAK --</span></div>
+								<svg class="throughput-wave" viewBox="0 0 320 100" preserveAspectRatio="none" aria-hidden="true">
+									<polygon class="throughput-area" points="0,100 320,100"></polygon>
+									<polyline class="throughput-line-glow" points=""></polyline>
+									<polyline class="throughput-line" points=""></polyline>
+								</svg>
+                                <div class="throughput-bars"></div>
+                                <div class="throughput-empty">WAITING FOR FIRST WRITE</div>
                             </div>
                             <div class="live-vitals-sub">
                                 <span class="live-file">waiting file</span>
                                 <span class="live-size">--</span>
                             </div>
+							<div class="integrity-card">
+								<div class="integrity-head"><span class="integrity-title">SESSION INTEGRITY</span><span class="integrity-score">100.0%</span></div>
+								<div class="integrity-track"><div class="integrity-fill"></div></div>
+								<div class="integrity-grid">
+									<div class="integrity-stat"><span class="integrity-stat-label">RECORDED</span><span class="integrity-stat-value integrity-recorded">--</span></div>
+									<div class="integrity-stat"><span class="integrity-stat-label">SEGMENTS</span><span class="integrity-stat-value integrity-segments">0</span></div>
+									<div class="integrity-stat"><span class="integrity-stat-label">RESTARTS</span><span class="integrity-stat-value integrity-restarts">0</span></div>
+									<div class="integrity-stat"><span class="integrity-stat-label">TOTAL GAP</span><span class="integrity-stat-value integrity-gap">0.0s</span></div>
+									<div class="integrity-stat"><span class="integrity-stat-label">LONGEST GAP</span><span class="integrity-stat-value integrity-max-gap">0.0s</span></div>
+									<div class="integrity-stat"><span class="integrity-stat-label">LAST RECOVERY</span><span class="integrity-stat-value integrity-recovery">--</span></div>
+									<div class="integrity-stat"><span class="integrity-stat-label">VERIFIED FILES</span><span class="integrity-stat-value integrity-verified">0 / 0</span></div>
+									<div class="integrity-stat"><span class="integrity-stat-label">SESSION DATA</span><span class="integrity-stat-value integrity-bytes">0 B</span></div>
+									<div class="integrity-stat"><span class="integrity-stat-label">DISK LEFT</span><span class="integrity-stat-value integrity-disk">--</span></div>
+								</div>
+							</div>
+                            <div class="pipeline-grid">
+                                <div class="pipeline-item"><span class="pipeline-label">RECORDING TIME</span><span class="pipeline-value live-recording-time">--:--:--</span></div>
+                                <div class="pipeline-item"><span class="pipeline-label">SEGMENT TIME</span><span class="pipeline-value live-segment-time">--:--:--</span></div>
+                                <div class="pipeline-item"><span class="pipeline-label">LAST WRITE</span><span class="pipeline-value live-write-age">waiting</span></div>
+                                <div class="pipeline-item"><span class="pipeline-label">FFMPEG</span><span class="pipeline-value live-ffmpeg">--</span></div>
+								<div class="pipeline-item pipeline-watchdog starting"><span class="pipeline-label">WRITE WATCHDOG · WARN 30s · RESTART 60s</span><span class="pipeline-value live-watchdog">STARTUP · waiting for first write</span></div>
+								<div class="pipeline-item"><span class="pipeline-label">SELECTED QUALITY</span><span class="pipeline-value live-selected-quality">--</span></div>
+								<div class="pipeline-item"><span class="pipeline-label">AVAILABLE QUALITIES</span><span class="pipeline-value live-available-qualities">--</span></div>
+                                <div class="pipeline-item pipeline-processes"><span class="pipeline-value live-streamlink-pid">streamlink: --</span><span class="pipeline-value live-ffmpeg-pid">ffmpeg: --</span></div>
+                            </div>
                         </div>
+                    </div>
+                    <div class="channel-metrics">
+                        <div class="metric-cell"><span class="metric-label">PROBE SUCCESS</span><span class="metric-value metric-probe">{{$state.ProbeSuccessRate | printf "%.1f"}}% / {{$state.ProbeAttempts}}</span></div>
+                        <div class="metric-cell"><span class="metric-label">AVG PROBE</span><span class="metric-value metric-probe-avg">{{$state.ProbeAverageDuration | printf "%.0f"}} ms</span></div>
+                        <div class="metric-cell"><span class="metric-label">REC RESTARTS</span><span class="metric-value metric-restarts">{{$state.RecordingRestartCount}}</span></div>
+                        <div class="metric-cell"><span class="metric-label">FFMPEG ABNORMAL</span><span class="metric-value metric-ffmpeg-errors">{{$state.FFmpegAbnormalExits}}</span></div>
+                        <div class="metric-cell"><span class="metric-label">START FAILURES</span><span class="metric-value metric-start-failures">{{$state.RecordingStartFailures}}</span></div>
+                        <div class="metric-cell"><span class="metric-label">RECORDED</span><span class="metric-value metric-recorded" data-bytes="{{$state.RecordedBytes}}">--</span></div>
+                        <div class="metric-cell"><span class="metric-label">LAST WRITE</span><span class="metric-value metric-last-write">{{if $state.LastSuccessfulWrite}}{{$state.LastSuccessfulWrite}}{{else}}--{{end}}</span></div>
+                        <div class="metric-cell"><span class="metric-label">SESSION ID</span><span class="metric-value metric-session" title="{{$state.SessionID}}">{{if $state.SessionID}}{{$state.SessionID}}{{else}}--{{end}}</span></div>
+                        <div class="metric-cell"><span class="metric-label">RECORDING SINCE</span><span class="metric-value metric-recording-since">{{if $state.RecordingStartedAt}}{{$state.RecordingStartedAt}}{{else}}--{{end}}</span></div>
+                        <div class="metric-cell metric-error {{if $state.LastError}}has-error{{end}}"><span class="metric-label">LAST ERROR · <span class="metric-error-at">{{$state.LastErrorAt}}</span></span><span class="metric-value metric-last-error" title="{{$state.LastError}}">{{$state.LastError}}</span></div>
                     </div>
                 </div>
                 
@@ -365,7 +525,7 @@ const htmlTemplate = `<!DOCTYPE html>
                     <div class="history-list">
                         {{range .Files}}
                         <div class="history-item {{if .IsGrowing}}row-growing{{end}}" data-channel="{{.Channel}}" data-filename="{{.Name}}">
-                            <a class="history-link" href="/download/{{.Channel}}/{{.Name}}" download>
+                            <a class="history-link" href="/download/{{.Channel}}/{{.Name}}" download="{{.Name}}">
                                 {{if .IsGrowing}}<span class="pulse-dot"></span>{{end}}
                                 <span>{{.Name}}</span>
                             </a>
@@ -381,10 +541,11 @@ const htmlTemplate = `<!DOCTYPE html>
                 </div>
 
                 <div class="channel-actions">
+                    <button onclick="openSessionDetail(this)" class="btn btn-probe">DETAILS</button>
                     {{if $state.IsRecording}}
-                    <button onclick="restartStream(this, '{{$prefix}}')" class="btn btn-restart action-btn">RESTART REC</button>
+                    <button onclick="restartStream(this)" class="btn btn-restart action-btn">RESTART REC</button>
                     {{else}}
-                    <button onclick="forceProbe(this, '{{$prefix}}')" class="btn btn-probe action-btn" {{if $state.IsProbing}}disabled{{end}}>SCAN NOW</button>
+                    <button onclick="forceProbe(this)" class="btn btn-probe action-btn" {{if $state.IsProbing}}disabled{{end}}>SCAN NOW</button>
                     {{end}}
                 </div>
             </div>
@@ -397,15 +558,50 @@ const htmlTemplate = `<!DOCTYPE html>
                 <div class="log-title">LOG TERMINAL</div>
                 <button onclick="closeLogViewer()" class="log-close">CLOSE</button>
             </div>
+            <div class="log-filters">
+                <select id="logLevel" onchange="fetchLogs()"><option value="">ALL</option><option>INFO</option><option>WARN</option><option>ERROR</option></select>
+                <input id="logChannel" placeholder="channel">
+                <input id="logQuery" placeholder="keyword / session id">
+                <button onclick="fetchLogs()" class="log-close">FILTER</button>
+            </div>
             <div id="logBody" class="log-body">Connecting to log stream...</div>
         </div>
     </div>
 
+    <div id="sessionModal" class="log-modal">
+        <div class="log-box">
+            <div class="log-header"><div class="log-title">SESSION DETAIL</div><button onclick="closeSessionDetail()" class="log-close">CLOSE</button></div>
+            <div id="sessionBody" class="detail-body">Loading session...</div>
+        </div>
+    </div>
+
+    <div id="settingsModal" class="log-modal">
+        <div class="log-box">
+            <div class="log-header"><div class="log-title">CONFIG SETTINGS</div><button onclick="closeSettings()" class="log-close">CLOSE</button></div>
+            <div class="detail-body">
+                <div class="settings-form">
+                    <label class="settings-field full">TARGET URLS · ONE PER LINE<textarea id="cfgTargets"></textarea></label>
+                    <label class="settings-field">WEB PORT<input id="cfgPort" type="number" min="1" max="65535"></label>
+                    <label class="settings-field">PROBE INTERVAL · SECONDS<input id="cfgInterval" type="number" min="1"></label>
+                    <label class="settings-field">WINDOW START<input id="cfgStart" type="time"></label>
+                    <label class="settings-field">WINDOW END<input id="cfgEnd" type="time"></label>
+                    <label class="settings-field">MAX DEEP SLEEP · SECONDS<input id="cfgSleep" type="number" min="1"></label>
+                    <div class="settings-note">Changing target URLs or Web Port requires a Web restart. Schedule values apply immediately after save.</div>
+                    <div id="settingsMessage" class="settings-note"></div>
+                    <div class="settings-actions"><button onclick="saveSettings()" class="log-close">SAVE CONFIG</button></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script>
+        console.log("go_straight template: scan-fix-v2");
         let logInterval = null;
         const streamVitals = {};
         const sleepTimers = {};
         const manualProbeHolds = {};
+		const liveHistoryEstimates = {};
+		let statusRequestInFlight = false;
 
         function getManualProbeHold(prefix) {
             const hold = manualProbeHolds[prefix];
@@ -425,6 +621,15 @@ const htmlTemplate = `<!DOCTYPE html>
             return (sizes[i] === 'GB' || sizes[i] === 'TB') ? val.toFixed(2) + " " + sizes[i] : val.toFixed(2) + " " + sizes[i];
         }
 
+        function escapeHtml(text) {
+            return String(text || "")
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#039;");
+        }
+
         function cleanStatusText(text) {
             const raw = String(text || "");
 
@@ -438,7 +643,6 @@ const htmlTemplate = `<!DOCTYPE html>
             if (raw.includes("尚未開播")) return "stream offline, waiting for next probe";
             if (raw.includes("非戰備休眠")) return "outside battle window";
             if (raw.includes("刺探待命")) return "probe cooldown";
-
             return raw
                 .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, "")
                 .replace(/^\s*[\-:：|]+\s*/, "")
@@ -450,7 +654,29 @@ const htmlTemplate = `<!DOCTYPE html>
             document.querySelectorAll(".probe-msg").forEach(function(el) {
                 el.innerText = cleanStatusText(el.innerText);
             });
+			document.querySelectorAll(".log-modal").forEach(modal => {
+				modal.addEventListener("click", event => {
+					if (event.target === modal) closeModal(modal);
+				});
+			});
         });
+
+		document.addEventListener("keydown", event => {
+			if (event.key === "Escape") {
+				const openModal = Array.from(document.querySelectorAll(".log-modal")).find(modal => modal.style.display === "block");
+				if (openModal) closeModal(openModal);
+			}
+		});
+
+		function closeModal(modal) {
+			if (!modal) return;
+			modal.style.display = "none";
+			document.body.style.overflow = "auto";
+			if (modal.id === "logModal" && logInterval) {
+				clearInterval(logInterval);
+				logInterval = null;
+			}
+		}
 
         function openLogViewer() {
             const modal = document.getElementById("logModal");
@@ -462,17 +688,19 @@ const htmlTemplate = `<!DOCTYPE html>
         }
 
         function closeLogViewer() {
-            document.getElementById("logModal").style.display = "none";
-            document.body.style.overflow = "auto";
-            if (logInterval) {
-                clearInterval(logInterval);
-                logInterval = null;
-            }
+			closeModal(document.getElementById("logModal"));
         }
 
         function fetchLogs() {
             const logBody = document.getElementById("logBody");
-            fetch('/api/logs')
+			const params = new URLSearchParams();
+			const level = document.getElementById("logLevel").value;
+			const channel = document.getElementById("logChannel").value;
+			const query = document.getElementById("logQuery").value;
+			if (level) params.set("level", level);
+			if (channel) params.set("channel", channel);
+			if (query) params.set("q", query);
+            fetch('/api/logs?' + params.toString())
                 .then(r => r.text())
                 .then(text => {
                     const isAtBottom = logBody.scrollHeight - logBody.clientHeight <= logBody.scrollTop + 100;
@@ -486,15 +714,98 @@ const htmlTemplate = `<!DOCTYPE html>
                 });
         }
 
+		function closeSessionDetail() {
+			closeModal(document.getElementById("sessionModal"));
+		}
+
+		function closeSettings() {
+			closeModal(document.getElementById("settingsModal"));
+		}
+
+		function openSettings() {
+			const modal = document.getElementById("settingsModal");
+			const message = document.getElementById("settingsMessage");
+			modal.style.display = "block";
+			document.body.style.overflow = "hidden";
+			message.innerText = "Loading config...";
+			fetch('/api/config').then(r => {
+				if (!r.ok) return r.json().then(e => { throw new Error(e.error || 'Config load failed'); });
+				return r.json();
+			}).then(cfg => {
+				document.getElementById("cfgTargets").value = (cfg.target_urls || []).join("\n");
+				document.getElementById("cfgPort").value = cfg.web_port || "";
+				document.getElementById("cfgStart").value = cfg.probe_start || "";
+				document.getElementById("cfgEnd").value = cfg.probe_end || "";
+				document.getElementById("cfgInterval").value = cfg.probe_interval || "";
+				document.getElementById("cfgSleep").value = cfg.probe_sleep_deep || "";
+				message.innerText = "";
+			}).catch(err => message.innerText = err.message);
+		}
+
+		function saveSettings() {
+			const message = document.getElementById("settingsMessage");
+			const cfg = {
+				target_urls: document.getElementById("cfgTargets").value.split(/\r?\n/).map(v => v.trim()).filter(Boolean),
+				web_port: Number(document.getElementById("cfgPort").value),
+				probe_start: document.getElementById("cfgStart").value,
+				probe_end: document.getElementById("cfgEnd").value,
+				probe_interval: Number(document.getElementById("cfgInterval").value),
+				probe_sleep_deep: Number(document.getElementById("cfgSleep").value)
+			};
+			message.innerText = "Saving...";
+			fetch('/api/config', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(cfg)}).then(r => r.json().then(data => {
+				if (!r.ok) throw new Error(data.error || 'Config save failed');
+				return data;
+			})).then(result => {
+				message.innerText = result.restart_required ? "Saved. Restart required." : "Saved and applied.";
+				if (result.restart_required && confirm("Config saved. Restart now to apply channel or port changes?")) {
+					fetch('/api/restart_cluster', {method:'POST'}).finally(() => {
+						setTimeout(() => { window.location.href = 'http://' + window.location.hostname + ':' + cfg.web_port + '/'; }, 4500);
+					});
+				}
+			}).catch(err => message.innerText = err.message);
+		}
+
+		function openSessionDetail(btn) {
+			const prefix = getChannelPrefix(btn, "");
+			const modal = document.getElementById("sessionModal");
+			const body = document.getElementById("sessionBody");
+			modal.style.display = "block";
+			document.body.style.overflow = "hidden";
+			body.innerText = "Loading session...";
+			fetch('/api/session?prefix=' + encodeURIComponent(prefix)).then(r => r.json()).then(data => {
+				const s = data.state || {};
+				const trend = Array.isArray(data.trend) ? data.trend : [];
+				const values = trend.map(p => Number(p.write_speed_bytes || 0) / 1024 / 1024);
+				const max = Math.max(.01, ...values);
+				const points = values.map((v,i) => ((i / Math.max(1, values.length-1))*600).toFixed(1) + ',' + (95-(v/max)*85).toFixed(1)).join(' ');
+				const events = (data.events || []).slice().reverse().map(e => '<div class="event-row '+escapeHtml(e.level)+'"><b>'+escapeHtml(e.time)+' · '+escapeHtml(e.type)+'</b><br>'+escapeHtml(e.message)+'</div>').join('') || '<div class="history-empty">No events yet</div>';
+				body.innerHTML = '<div class="detail-summary">' +
+					'<div class="detail-cell">CHANNEL<br><b>@'+escapeHtml(prefix)+'</b></div>' +
+					'<div class="detail-cell">SESSION<br><b>'+escapeHtml(s.session_id || '--')+'</b></div>' +
+					'<div class="detail-cell">PIPELINE<br><b>'+escapeHtml(s.pipeline_state || '--')+'</b></div>' +
+					'<div class="detail-cell">TOTAL FILES<br><b>'+String((data.files || []).length)+'</b></div></div>' +
+					'<div class="metric-label">WRITE SPEED TREND · '+values.length+' SAMPLES</div><svg class="trend-chart" viewBox="0 0 600 100" preserveAspectRatio="none"><polyline points="'+points+'" fill="none" stroke="#a6e3a1" stroke-width="2"/></svg>' +
+					'<div class="metric-label">EVENT TIMELINE</div><div class="event-list">'+events+'</div>';
+			}).catch(err => body.innerText = "Session unavailable: " + err);
+		}
+
+		function renderAlerts(data) {
+			const alerts = Array.isArray(data.alerts) ? data.alerts : [];
+			const center = document.getElementById("alertCenter");
+			document.getElementById("alertCount").innerText = String(alerts.length);
+			document.getElementById("alertList").innerHTML = alerts.map(a => '<div class="alert-item '+escapeHtml(a.level)+'">'+(a.channel ? '@'+escapeHtml(a.channel)+' · ' : '')+escapeHtml(a.message)+'</div>').join('');
+			center.classList.toggle("active", alerts.length > 0);
+		}
+
         function logCurrentStatus() {
-            fetch('/api/log_status')
+            fetch('/api/log_status', { method: 'POST' })
                 .then(r => r.json())
                 .then(d => {
-                    if(d.status === "success") {
-                        openLogViewer();
-                    }
+					const strip = document.getElementById("pipelineSelfCheck");
+					if (strip) strip.querySelector(".selfcheck-status").innerText = "RUNNING";
                 })
-                .catch(err => alert("Status snapshot failed: " + err));
+				.catch(err => alert("Pipeline self-test failed to start: " + err));
         }
 
         function restartCluster() {
@@ -505,7 +816,7 @@ const htmlTemplate = `<!DOCTYPE html>
 
             alert("Restart command sent. Please refresh this dashboard in 5 seconds.");
 
-            fetch('/api/restart_cluster', { signal: controller.signal })
+            fetch('/api/restart_cluster', { method: 'POST', signal: controller.signal })
                 .then(r => r.json())
                 .then(d => {
                     clearTimeout(timeoutId);
@@ -516,7 +827,21 @@ const htmlTemplate = `<!DOCTYPE html>
                 });
         }
 
+        function getChannelPrefix(btn, prefix) {
+            let p = String(prefix || "").trim();
+            if (!p && btn && typeof btn.closest === "function") {
+                const box = btn.closest(".channel-box");
+                if (box) p = String(box.getAttribute("data-channel") || "").trim();
+            }
+            return p.replace(/^@+/, "");
+        }
+
         function forceProbe(btn, prefix) {
+            prefix = getChannelPrefix(btn, prefix);
+            if (!prefix) {
+                alert("Missing channel prefix");
+                return;
+            }
             btn.disabled = true;
             btn.innerText = "SCANNING...";
 
@@ -531,7 +856,7 @@ const htmlTemplate = `<!DOCTYPE html>
                 renderProbeScan(box, prefix, { is_probing: true }, "手動指令");
             }
 
-            fetch('/api/probe?prefix=' + prefix)
+            fetch('/api/probe?prefix=' + encodeURIComponent(prefix), { method: 'POST' })
                 .then(r => {
                     if(!r.ok) return r.json().then(e => { throw new Error(e.error); });
                     return r.json();
@@ -552,10 +877,16 @@ const htmlTemplate = `<!DOCTYPE html>
         }
 
         function restartStream(btn, prefix) {
+            prefix = getChannelPrefix(btn, prefix);
+            if (!prefix) {
+                alert("Missing channel prefix");
+                return;
+            }
+
             if (!confirm("Force restart the current recording for @" + prefix + "?\nThe current segment will be closed and a new file will be opened.")) return;
             btn.disabled = true;
             btn.innerText = "RESTARTING...";
-            fetch('/api/restart?prefix=' + prefix)
+            fetch('/api/restart?prefix=' + encodeURIComponent(prefix), { method: 'POST' })
                 .then(r => {
                     if(!r.ok) return r.json().then(e => { throw new Error(e.error); });
                     return r.json();
@@ -586,6 +917,17 @@ const htmlTemplate = `<!DOCTYPE html>
             const m = Math.floor((seconds % 3600) / 60);
             const s = seconds % 60;
             return String(h).padStart(2, "0") + ":" + String(m).padStart(2, "0") + ":" + String(s).padStart(2, "0");
+        }
+
+        function parseServerTime(value) {
+            if (!value) return null;
+            const parsed = new Date(String(value).replace(" ", "T"));
+            return Number.isNaN(parsed.getTime()) ? null : parsed;
+        }
+
+        function elapsedSeconds(value) {
+            const parsed = parseServerTime(value);
+            return parsed ? Math.max(0, Math.floor((Date.now() - parsed.getTime()) / 1000)) : null;
         }
 
         function inferCountdownTotal(seconds) {
@@ -642,66 +984,182 @@ const htmlTemplate = `<!DOCTYPE html>
             return true;
         }
 
-        function renderSleepCountdown(box, prefix, status) {
-            const msgCell = box.querySelector(".probe-msg");
+        function paintSleepCountdown(box, prefix, remaining, status, paused) {
             const sleepBox = box.querySelector(".sleep-countdown");
-            if (!msgCell || !sleepBox) return false;
+            if (!sleepBox) return;
 
-            const remaining = parseCountdownSeconds(status);
-            if (remaining === null) {
-                sleepBox.style.display = "none";
-                return false;
-            }
-
-            let state = sleepTimers[prefix];
-            if (!state || remaining > state.total || remaining > state.lastRemaining + 10) {
-                state = {
-                    total: inferCountdownTotal(remaining),
-                    lastRemaining: remaining
-                };
-            }
-            state.lastRemaining = remaining;
-            sleepTimers[prefix] = state;
-
-            const total = Math.max(1, state.total);
+            const state = sleepTimers[prefix];
+            const total = Math.max(1, state ? state.total : inferCountdownTotal(remaining));
             const pct = Math.max(0, Math.min(100, ((total - remaining) / total) * 100));
+
             const label = sleepBox.querySelector(".sleep-label");
             const time = sleepBox.querySelector(".sleep-time");
-            const fill = sleepBox.querySelector(".sleep-fill");
+			const ring = sleepBox.querySelector(".cooldown-ring");
             const mode = sleepBox.querySelector(".sleep-mode");
             const percent = sleepBox.querySelector(".sleep-percent");
+			const stateLabel = sleepBox.querySelector(".sleep-state");
+			const pauseButton = sleepBox.querySelector(".cooldown-btn.pause");
+			const startButton = sleepBox.querySelector(".cooldown-btn.start");
 
             if (label) {
                 label.innerText = String(status || "").includes("刺探") ? "PROBE COOLDOWN" : "SLEEP TIMER";
             }
             if (time) time.innerText = formatCountdown(remaining);
-            if (fill) fill.style.width = pct.toFixed(1) + "%";
+			if (ring) ring.style.setProperty("--progress", (pct * 3.6).toFixed(1) + "deg");
+			sleepBox.classList.toggle("paused", !!paused);
+			if (stateLabel) stateLabel.innerText = paused ? "PAUSED" : "RUNNING";
+			if (pauseButton) pauseButton.disabled = !!paused;
+			if (startButton) startButton.disabled = !paused;
             if (mode) {
                 mode.innerText = String(status || "").includes("非戰備") ? "outside battle window" : "next probe cooldown";
             }
-            if (percent) percent.innerText = pct.toFixed(0) + "% elapsed";
+			if (percent) percent.innerText = paused ? "countdown frozen" : Math.max(0, 100 - pct).toFixed(0) + "% remaining";
+        }
+
+        function renderSleepCountdown(box, prefix, stream, status) {
+            const msgCell = box.querySelector(".probe-msg");
+            const sleepBox = box.querySelector(".sleep-countdown");
+            if (!msgCell || !sleepBox) return false;
+
+            const serverRemaining = parseCountdownSeconds(status);
+			const paused = !!(stream && stream.probe_paused);
+            if (serverRemaining === null && !paused) {
+                sleepBox.style.display = "none";
+                delete sleepTimers[prefix];
+                return false;
+            }
+
+            const now = Date.now();
+            let state = sleepTimers[prefix];
+
+			const initialRemaining = serverRemaining === null ? 0 : serverRemaining;
+            if (!state) {
+                state = {
+					total: inferCountdownTotal(initialRemaining),
+					baseRemaining: initialRemaining,
+                    baseAt: now,
+					status: status,
+					paused: paused
+                };
+            } else {
+                const smoothRemaining = Math.max(
+                    0,
+                    state.baseRemaining - Math.floor((now - state.baseAt) / 1000)
+                );
+
+                // Do not let a slower / stale backend status pull the UI countdown backwards.
+				if (serverRemaining !== null && (paused || serverRemaining <= smoothRemaining || serverRemaining > smoothRemaining + 5)) {
+                    state.baseRemaining = serverRemaining;
+                    state.baseAt = now;
+                }
+
+				if (serverRemaining !== null && (serverRemaining > state.total || serverRemaining > smoothRemaining + 5)) {
+                    state.total = inferCountdownTotal(serverRemaining);
+                }
+
+                state.status = status;
+				if (state.paused && !paused) state.baseAt = now;
+				state.paused = paused;
+            }
+
+            sleepTimers[prefix] = state;
+
+			const displayRemaining = state.paused ? state.baseRemaining : Math.max(0, state.baseRemaining - Math.floor((Date.now() - state.baseAt) / 1000));
+
+			paintSleepCountdown(box, prefix, displayRemaining, status, state.paused);
 
             msgCell.style.display = "none";
             sleepBox.style.display = "block";
             return true;
         }
 
-        function renderECG(polyline, samples) {
-            if (!polyline) return;
-            const w = 240, h = 46;
-            const values = samples && samples.length ? samples.slice(-28) : [0];
-            const max = Math.max(0.05, ...values);
-            const step = values.length > 1 ? w / (values.length - 1) : w;
-            const points = values.map(function(v, i) {
-                const normalized = Math.max(0, Math.min(v / max, 1));
-                const x = i * step;
-                const y = h - 6 - normalized * (h - 14);
-                return x.toFixed(1) + "," + y.toFixed(1);
-            }).join(" ");
-            polyline.setAttribute("points", points);
+        function tickSleepCountdowns() {
+            Object.entries(sleepTimers).forEach(([prefix, state]) => {
+                const box = document.querySelector('div[data-channel="' + prefix + '"]');
+                if (!box) return;
+
+                const sleepBox = box.querySelector(".sleep-countdown");
+                if (!sleepBox || sleepBox.style.display === "none") return;
+
+				const remaining = state.paused ? state.baseRemaining : Math.max(0, state.baseRemaining - Math.floor((Date.now() - state.baseAt) / 1000));
+
+				paintSleepCountdown(box, prefix, remaining, state.status || "", state.paused);
+            });
         }
 
-        function updateLiveVitals(box, prefix, stream) {
+		function setProbePaused(button, paused) {
+			const prefix = getChannelPrefix(button, "");
+			if (!prefix || button.disabled) return;
+			button.disabled = true;
+			fetch('/api/probe_pause?prefix=' + encodeURIComponent(prefix) + '&paused=' + String(paused), {method:'POST'})
+				.then(r => r.json().then(data => {
+					if (!r.ok) throw new Error(data.error || 'Unable to change probe state');
+					const state = sleepTimers[prefix];
+					if (state) {
+						const now = Date.now();
+						if (paused && !state.paused) state.baseRemaining = Math.max(0, state.baseRemaining - Math.floor((now - state.baseAt) / 1000));
+						state.baseAt = now;
+						state.paused = paused;
+						const box = button.closest('.channel-box');
+						if (box) paintSleepCountdown(box, prefix, state.baseRemaining, state.status || '', paused);
+					} else {
+						const sleepBox = button.closest('.sleep-countdown');
+						if (sleepBox) {
+							sleepBox.classList.toggle('paused', paused);
+							const stateLabel = sleepBox.querySelector('.sleep-state');
+							const pauseButton = sleepBox.querySelector('.cooldown-btn.pause');
+							const startButton = sleepBox.querySelector('.cooldown-btn.start');
+							if (stateLabel) stateLabel.innerText = paused ? 'PAUSED' : 'RUNNING';
+							if (pauseButton) pauseButton.disabled = paused;
+							if (startButton) startButton.disabled = !paused;
+						}
+					}
+				}))
+				.catch(error => { alert(error.message); button.disabled = false; });
+		}
+
+		function renderThroughput(liveVitals, samples, hasData) {
+			const chart = liveVitals.querySelector(".throughput-bars");
+			const empty = liveVitals.querySelector(".throughput-empty");
+			const line = liveVitals.querySelector(".throughput-line");
+			const glow = liveVitals.querySelector(".throughput-line-glow");
+			const area = liveVitals.querySelector(".throughput-area");
+			const averageLabel = liveVitals.querySelector(".throughput-average");
+			const peakLabel = liveVitals.querySelector(".throughput-peak");
+			if (!chart || !empty || !line || !glow || !area) return;
+			empty.classList.toggle("hidden", hasData);
+			if (!hasData) {
+				chart.innerHTML = "";
+				line.setAttribute("points", "");
+				glow.setAttribute("points", "");
+				area.setAttribute("points", "0,100 320,100");
+				if (averageLabel) averageLabel.innerText = "AVG --";
+				if (peakLabel) peakLabel.innerText = "PEAK --";
+				return;
+			}
+			const values = samples.slice(-32);
+			const max = Math.max(0.01, ...values);
+			const average = values.reduce((sum, value) => sum + value, 0) / Math.max(1, values.length);
+			const padded = values.length > 1 ? values : [values[0] || 0, values[0] || 0];
+			const points = padded.map((value, index) => {
+				const x = (index / Math.max(1, padded.length - 1)) * 320;
+				const normalized = Math.max(0, Math.min(1, value / max));
+				const y = 91 - normalized * 72;
+				return x.toFixed(1) + "," + y.toFixed(1);
+			}).join(" ");
+			line.setAttribute("points", points);
+			glow.setAttribute("points", points);
+			area.setAttribute("points", "0,100 " + points + " 320,100");
+			if (averageLabel) averageLabel.innerText = "AVG " + average.toFixed(2) + " MB/s";
+			if (peakLabel) peakLabel.innerText = "PEAK " + max.toFixed(2) + " MB/s";
+			chart.innerHTML = values.map(value => {
+				const height = Math.max(4, Math.min(100, (value / max) * 100));
+				const opacity = value > 0 ? 1 : .22;
+				return '<i class="throughput-bar" style="height:'+height.toFixed(1)+'%;opacity:'+opacity+'"></i>';
+			}).join("");
+        }
+
+		function updateLiveVitals(box, prefix, stream, system, estimatedRemainingSeconds) {
             const msgCell = box.querySelector(".probe-msg");
             const liveVitals = box.querySelector(".live-vitals");
             if (!msgCell || !liveVitals) return;
@@ -713,7 +1171,7 @@ const htmlTemplate = `<!DOCTYPE html>
                 liveVitals.style.display = "none";
                 if (renderProbeScan(box, prefix, stream, stream.probe_status)) {
                     if (sleepBox) sleepBox.style.display = "none";
-                } else if (!renderSleepCountdown(box, prefix, stream.probe_status)) {
+				} else if (!renderSleepCountdown(box, prefix, stream, stream.probe_status)) {
                     if (sleepBox) sleepBox.style.display = "none";
                     if (probeBox) probeBox.style.display = "none";
                     msgCell.style.display = "block";
@@ -734,34 +1192,244 @@ const htmlTemplate = `<!DOCTYPE html>
                 state = {
                     file: stream.latest_file || "",
                     lastSize: currentSize,
-                    lastTime: now,
-                    speeds: [0]
+					lastChangeTime: now,
+					lastSampleTime: 0,
+					lastSpeed: 0,
+					hasData: false,
+					speeds: []
                 };
             }
 
             const diff = currentSize - state.lastSize;
-            const seconds = Math.max(0.001, (now - state.lastTime) / 1000);
-            const speed = diff >= 0 ? diff / 1024 / 1024 / seconds : 0;
-            state.speeds.push(speed);
-            if (state.speeds.length > 28) state.speeds.shift();
-            state.lastSize = currentSize;
-            state.lastTime = now;
+			const seconds = Math.max(0.001, (now - state.lastChangeTime) / 1000);
+			let measuredSpeed = 0;
+			if (diff > 0) {
+				measuredSpeed = diff / 1024 / 1024 / seconds;
+				state.lastChangeTime = now;
+				state.lastSize = currentSize;
+				state.hasData = true;
+			}
+			const backendSpeed = Number(stream.write_bytes_per_second || 0) / 1024 / 1024;
+			let speed = backendSpeed > 0 ? backendSpeed : measuredSpeed;
+			if (speed > 0) {
+				state.lastSpeed = state.lastSpeed > 0 ? state.lastSpeed * .55 + speed * .45 : speed;
+				state.hasData = true;
+			} else if (now - state.lastChangeTime < 6500) {
+				speed = state.lastSpeed;
+			} else {
+				state.lastSpeed *= .65;
+				speed = state.lastSpeed;
+			}
+			if (now - state.lastSampleTime >= 1000) {
+				state.speeds.push(Math.max(0, speed));
+				if (state.speeds.length > 32) state.speeds.shift();
+				state.lastSampleTime = now;
+			}
             streamVitals[prefix] = state;
 
             const speedText = liveVitals.querySelector(".live-speed");
             const fileText = liveVitals.querySelector(".live-file");
             const sizeText = liveVitals.querySelector(".live-size");
-            const polyline = liveVitals.querySelector(".ecg-line");
 
-            if (speedText) speedText.innerText = speed.toFixed(2) + " MB/s";
+			if (speedText) speedText.innerText = state.hasData ? Math.max(0, speed).toFixed(2) + " MB/s" : "WAITING";
             if (fileText) fileText.innerText = stream.latest_file || "waiting file";
             if (sizeText) sizeText.innerText = formatBytes(currentSize);
-            renderECG(polyline, state.speeds);
+			renderThroughput(liveVitals, state.speeds, state.hasData);
+
+			const recordingAge = elapsedSeconds(stream.recording_started_at);
+			const segmentAge = elapsedSeconds(stream.segment_started_at);
+			const writeAge = elapsedSeconds(stream.last_successful_write);
+			const health = liveVitals.querySelector(".live-health");
+			let healthState = "healthy", healthText = "HEALTHY";
+			if (writeAge === null || stream.pipeline_state === "STARTING") {
+				healthState = "starting";
+				healthText = "STARTING";
+			} else if (writeAge >= 60 || stream.pipeline_state === "WRITE_STALLED") {
+				healthState = "stale";
+				healthText = "RESTARTING";
+			} else if (writeAge >= 30 || stream.pipeline_state === "WRITE_DELAYED") {
+				healthState = "delayed";
+				healthText = "DELAYED";
+			}
+			if (health) {
+				health.className = "live-health " + healthState;
+				health.innerText = healthText;
+			}
+			const setLiveText = (selector, value) => {
+				const element = liveVitals.querySelector(selector);
+				if (element) element.innerText = value;
+			};
+			setLiveText(".live-recording-time", recordingAge === null ? "--:--:--" : formatCountdown(recordingAge));
+			setLiveText(".live-segment-time", segmentAge === null ? "--:--:--" : formatCountdown(segmentAge));
+			setLiveText(".live-write-age", writeAge === null ? "waiting" : writeAge + "s ago");
+			const watchdog = liveVitals.querySelector(".pipeline-watchdog");
+			let watchdogState = "healthy";
+			let watchdogText = "HEALTHY · last write " + (writeAge === null ? "waiting" : writeAge + "s ago");
+			if (writeAge === null) {
+				watchdogState = "starting";
+				const startupRemaining = Math.max(0, 75 - Number(segmentAge || 0));
+				watchdogText = "STARTUP · first-write timeout in " + startupRemaining + "s";
+			} else if (writeAge >= 60 || stream.pipeline_state === "WRITE_STALLED") {
+				watchdogState = "stalled";
+				watchdogText = "STALLED · rebuilding recording pipeline";
+			} else if (writeAge >= 30 || stream.pipeline_state === "WRITE_DELAYED") {
+				watchdogState = "delayed";
+				watchdogText = "DELAYED · automatic restart in " + Math.max(0, 60 - writeAge) + "s";
+			}
+			if (watchdog) watchdog.className = "pipeline-item pipeline-watchdog " + watchdogState;
+			setLiveText(".live-watchdog", watchdogText);
+			const ffmpegInfo = [stream.ffmpeg_bitrate, stream.ffmpeg_speed].filter(Boolean).join(" · ");
+			setLiveText(".live-ffmpeg", ffmpegInfo || stream.pipeline_state || "--");
+			const selectedQuality = [stream.selected_quality, stream.selected_stream_type ? '(' + stream.selected_stream_type + ')' : ''].filter(Boolean).join(' ');
+			setLiveText(".live-selected-quality", selectedQuality || "waiting");
+			setLiveText(".live-available-qualities", Array.isArray(stream.available_qualities) && stream.available_qualities.length ? stream.available_qualities.join(', ') : "--");
+			setLiveText(".live-streamlink-pid", "streamlink: " + (stream.streamlink_pid || "--"));
+			setLiveText(".live-ffmpeg-pid", "ffmpeg: " + (stream.ffmpeg_pid || "--"));
+
+			const integrity = liveVitals.querySelector(".integrity-card");
+			const integrityScore = Math.max(0, Math.min(100, Number(stream.session_health_percent ?? 100)));
+			if (integrity) integrity.className = "integrity-card " + (integrityScore < 95 || Number(stream.broken_segments || 0) > 0 ? "danger" : (integrityScore < 99.5 ? "warning" : "healthy"));
+			const integrityScoreEl = liveVitals.querySelector(".integrity-score");
+			if (integrityScoreEl) integrityScoreEl.innerText = integrityScore.toFixed(1) + "%";
+			const integrityFill = liveVitals.querySelector(".integrity-fill");
+			if (integrityFill) integrityFill.style.width = integrityScore.toFixed(1) + "%";
+			const msText = value => Number(value || 0) > 0 ? (Number(value) / 1000).toFixed(1) + "s" : "0.0s";
+			setLiveText(".integrity-recorded", recordingAge === null ? "--" : formatCountdown(recordingAge));
+			setLiveText(".integrity-segments", String(stream.session_segment_count || 0));
+			setLiveText(".integrity-restarts", String(stream.session_restart_count || 0));
+			setLiveText(".integrity-gap", msText(stream.session_gap_total_ms));
+			setLiveText(".integrity-max-gap", msText(stream.session_max_gap_ms));
+			setLiveText(".integrity-recovery", Number(stream.last_recovery_ms || 0) > 0 ? msText(stream.last_recovery_ms) : "--");
+			setLiveText(".integrity-verified", String(stream.verified_segments || 0) + " / " + String(stream.broken_segments || 0) + " bad");
+			setLiveText(".integrity-bytes", formatBytes(Number(stream.session_recorded_bytes || 0)));
+			const diskText = Number(estimatedRemainingSeconds || 0) > 0 ? formatCountdown(estimatedRemainingSeconds) : formatBytes(Number(system?.disk_avail || 0));
+			setLiveText(".integrity-disk", diskText);
+        }
+
+        function updateChannelMetrics(box, stream) {
+            const setText = (selector, value) => {
+                const element = box.querySelector(selector);
+                if (element) element.innerText = value;
+                return element;
+            };
+            const attempts = Number(stream.probe_attempts || 0);
+            setText(".metric-probe", Number(stream.probe_success_rate || 0).toFixed(1) + "% / " + attempts);
+            setText(".metric-probe-avg", Number(stream.probe_average_duration_ms || 0).toFixed(0) + " ms");
+            setText(".metric-restarts", String(stream.recording_restart_count || 0));
+            setText(".metric-ffmpeg-errors", String(stream.ffmpeg_abnormal_exits || 0));
+			setText(".metric-start-failures", String(stream.recording_start_failures || 0));
+            setText(".metric-recorded", formatBytes(Number(stream.recorded_bytes || 0)));
+            setText(".metric-last-write", stream.last_successful_write || "--");
+            const session = setText(".metric-session", stream.session_id || "--");
+            if (session) session.title = stream.session_id || "";
+            setText(".metric-recording-since", stream.recording_started_at || "--");
+
+            const errorCell = box.querySelector(".metric-error");
+            const errorText = setText(".metric-last-error", stream.last_error || "");
+            setText(".metric-error-at", stream.last_error_at || "");
+            if (errorText) errorText.title = stream.last_error || "";
+            if (errorCell) errorCell.classList.toggle("has-error", !!stream.last_error);
+        }
+
+        function renderHistoryList(box, prefix, files, stream) {
+            const count = box.querySelector(".history-count");
+            const list = box.querySelector(".history-list");
+            if (!list) return;
+
+            files = Array.isArray(files) ? files : [];
+			const growingFile = files.find(file => !!(file.is_growing ?? file.IsGrowing));
+			if (growingFile && stream && stream.is_recording) {
+				const actualSize = Number(growingFile.size_bytes ?? growingFile.SizeBytes ?? stream.latest_size ?? 0);
+				const speed = Math.max(0, Number(stream.write_bytes_per_second || 0));
+				const previous = liveHistoryEstimates[prefix];
+				liveHistoryEstimates[prefix] = {
+					file: growingFile.name || growingFile.Name || "",
+					baseSize: actualSize,
+					baseAt: Date.now(),
+					speed: speed > 0 ? speed : (previous && previous.file === (growingFile.name || growingFile.Name || "") ? previous.speed : 0)
+				};
+			} else {
+				delete liveHistoryEstimates[prefix];
+			}
+			const signature = files.map(file => [file.name, file.size_bytes, file.mtime, file.is_growing, file.quality && file.quality.status].join(':')).join('|');
+			if (list.dataset.signature === signature) return;
+			const previousScroll = list.scrollTop;
+			list.dataset.signature = signature;
+            if (count) count.innerText = files.length + " files";
+
+            if (files.length === 0) {
+                list.innerHTML = '<div class="history-empty">No recorded segments</div>';
+                return;
+            }
+
+            list.innerHTML = files.map(function(file) {
+                const channel = file.channel || file.Channel || prefix;
+                const name = file.name || file.Name || "";
+                const sizeBytes = Number(file.size_bytes ?? file.SizeBytes ?? 0);
+                const mtime = file.mtime || file.MTime || "";
+                const isGrowing = !!(file.is_growing ?? file.IsGrowing);
+				const quality = file.quality || file.Quality || null;
+				const qualityText = quality ? [quality.status, quality.resolution, quality.video_codec, quality.audio_codec, quality.duration_seconds ? Number(quality.duration_seconds).toFixed(0)+'s' : ''].filter(Boolean).join(' · ') : (isGrowing ? 'RECORDING' : 'PENDING CHECK');
+				const qualityClass = quality ? String(quality.status || '') : '';
+                const href = "/download/" + encodeURIComponent(channel) + "/" + encodeURIComponent(name);
+                return '' +
+                    '<div class="history-item ' + (isGrowing ? 'row-growing' : '') + '" data-channel="' + escapeHtml(channel) + '" data-filename="' + escapeHtml(name) + '">' +
+                        '<a class="history-link" href="' + href + '" download="' + escapeHtml(name) + '">' +
+                            (isGrowing ? '<span class="pulse-dot"></span>' : '') +
+                            '<span>' + escapeHtml(name) + '</span>' +
+                        '</a>' +
+                        '<div class="history-meta">' +
+                            '<span class="file-size" data-bytes="' + sizeBytes + '">' + formatBytes(sizeBytes) + '</span>' +
+                            '<span class="file-mtime">' + escapeHtml(mtime) + '</span>' +
+                        '</div>' +
+						'<span class="quality-badge '+escapeHtml(qualityClass)+'" title="'+escapeHtml(quality && quality.error || '')+'">'+escapeHtml(qualityText)+'</span>' +
+                    '</div>';
+            }).join("");
+			list.scrollTop = previousScroll;
+        }
+
+		function tickLiveHistorySizes() {
+			const now = Date.now();
+			Object.entries(liveHistoryEstimates).forEach(([prefix, state]) => {
+				if (!state || !state.file) return;
+				const box = document.querySelector('div[data-channel="' + prefix + '"]');
+				if (!box) return;
+				const rows = box.querySelectorAll('.history-item.row-growing');
+				let row = null;
+				rows.forEach(candidate => { if (candidate.getAttribute('data-filename') === state.file) row = candidate; });
+				if (!row) return;
+				const elapsed = Math.max(0, (now - state.baseAt) / 1000);
+				const estimatedSize = Math.max(state.baseSize, state.baseSize + state.speed * elapsed);
+				const size = row.querySelector('.file-size');
+				if (size) {
+					size.setAttribute('data-bytes', String(Math.round(estimatedSize)));
+					size.innerText = formatBytes(estimatedSize) + ' · LIVE';
+				}
+			});
+		}
+
+        function renderActionButton(box, prefix, stream) {
+            prefix = String(prefix || "").trim().replace(/^@+/, "");
+
+            const actions = box.querySelector(".channel-actions");
+            if (!actions) return;
+			const held = !!getManualProbeHold(prefix);
+			const disabled = stream.is_probing || held;
+			const actionState = stream.is_recording ? "recording" : (disabled ? "probing" : "idle");
+			if (actions.dataset.state === actionState) return;
+			actions.dataset.state = actionState;
+
+            if (stream.is_recording) {
+				actions.innerHTML = '<button onclick="openSessionDetail(this)" class="btn btn-probe">DETAILS</button><button onclick="restartStream(this)" class="btn btn-restart action-btn">RESTART REC</button>';
+                return;
+            }
+
+			actions.innerHTML = '<button onclick="openSessionDetail(this)" class="btn btn-probe">DETAILS</button><button onclick="forceProbe(this)" class="btn btn-probe action-btn" ' + (disabled ? 'disabled' : '') + '>' + (disabled ? 'SCANNING...' : 'SCAN NOW') + '</button>';
         }
 
         function shutdownCluster() {
             if (confirm("WARNING: this will stop all recordings and shut down the Go core service. Continue?")) {
-                fetch('/api/shutdown').then(r => r.json()).then(d => {
+                fetch('/api/shutdown', { method: 'POST' }).then(r => r.json()).then(d => {
                     alert("Shutdown command sent. Core service is shutting down.");
                     window.close();
                 }).catch(e => alert("Connection interrupted. The service may already be offline."));
@@ -773,8 +1441,27 @@ const htmlTemplate = `<!DOCTYPE html>
             if(!isNaN(b)) td.innerHTML = formatBytes(b);
         });
 
-        setInterval(function() {
+        setInterval(tickSleepCountdowns, 1000);
+		setInterval(tickLiveHistorySizes, 1000);
+
+		function pollStatus() {
+			if (statusRequestInFlight || document.hidden) return;
+			statusRequestInFlight = true;
             fetch('/api/status').then(r => r.json()).then(data => {
+				const connection = document.getElementById("systemConnection");
+				if (connection) connection.innerHTML = '<span class="ok">●</span> probe / record / web server running';
+				renderAlerts(data);
+				const selfCheck = data.pipeline_self_check || {};
+				const selfCheckStrip = document.getElementById("pipelineSelfCheck");
+				if (selfCheckStrip) {
+					const status = String(selfCheck.status || "PENDING").toUpperCase();
+					selfCheckStrip.className = "selfcheck-strip " + status.toLowerCase();
+					selfCheckStrip.querySelector(".selfcheck-status").innerText = status;
+					const detail = selfCheckStrip.querySelector(".selfcheck-detail");
+					if (detail) detail.innerText = status === "PASS"
+						? [selfCheck.resolution, selfCheck.video_codec, selfCheck.audio_codec, formatBytes(Number(selfCheck.output_bytes || 0)), Number(selfCheck.duration_ms || 0) + "ms"].filter(Boolean).join(" · ")
+						: (selfCheck.error || "Streamlink → pipe → FFmpeg → TS → ffprobe");
+				}
                 var uptime = data.system.uptime || "--";
                 var cpuUptimeText = document.getElementById("cpuUptimeText");
                 if (cpuUptimeText) cpuUptimeText.innerText = "uptime: " + uptime;
@@ -785,6 +1472,9 @@ const htmlTemplate = `<!DOCTYPE html>
                 document.getElementById("diskUsedText").innerText = usedGB.toFixed(2) + " GB";
                 document.getElementById("diskFreeText").innerText = availGB.toFixed(2) + " GB";
                 document.getElementById("diskSubText").innerHTML = "<span>" + usedGB.toFixed(2) + " / " + totalGB.toFixed(2) + " GB</span><span>free " + availGB.toFixed(2) + " GB</span>";
+				if (Number(data.estimated_remaining_seconds || 0) > 0) {
+					document.getElementById("diskSubText").innerHTML = "<span>" + usedGB.toFixed(2) + " / " + totalGB.toFixed(2) + " GB</span><span>recording left " + formatCountdown(data.estimated_remaining_seconds) + "</span>";
+				}
                 var bar = document.getElementById("diskBarFill");
                 bar.style.width = pct.toFixed(1) + "%";
                 bar.className = "btop-fill " + (pct > 90 ? "red" : (pct > 75 ? "orange" : ""));
@@ -808,61 +1498,41 @@ const htmlTemplate = `<!DOCTYPE html>
                     ramBar.className = "btop-fill " + (ramPct > 85 ? "red" : (ramPct > 65 ? "orange" : ""));
                 }
 
-                let reloadRequired = false;
                 Object.entries(data.streams).forEach(([prefix, stream]) => {
                     var box = document.querySelector('div[data-channel="' + prefix + '"]');
-                    if (box) {
-                        var wasRecording = box.classList.contains("recording");
-                        if(stream.is_recording) {
-                            box.classList.add("recording");
-                        } else {
-                            box.classList.remove("recording");
-                        }
-
-                        if (wasRecording !== stream.is_recording) { reloadRequired = true; }
-
-                        var badge = box.querySelector(".status-badge");
-                        if (badge) {
-                            badge.className = stream.is_recording ? "badge badge-live" : "badge badge-offline";
-                            badge.innerHTML = stream.is_recording ? "REC" : "IDLE";
-                        }
-                        updateLiveVitals(box, prefix, stream);
-                        
-                        var btn = box.querySelector(".action-btn");
-                        if (btn && !reloadRequired) {
-                            if (!stream.is_recording) {
-                                const held = !!getManualProbeHold(prefix);
-                                btn.disabled = stream.is_probing || held;
-                                btn.innerText = (stream.is_probing || held) ? "SCANNING..." : "SCAN NOW";
-                            }
-                        }
-
-                        if (stream.is_recording && stream.latest_file) {
-                        }
+                    if (!box) {
+                        // New channel added by config hot reload: full refresh once to create its card.
+                        location.reload();
+                        return;
                     }
 
-                    if (stream.is_recording && stream.latest_file) {
-                        var targetRow = document.querySelector('[data-channel="' + prefix + '"][data-filename="' + stream.latest_file + '"]');
-                        if (targetRow) {
-                            targetRow.classList.add("row-growing");
-                            var sizeCell = targetRow.querySelector(".file-size");
-                            if (sizeCell) {
-                                sizeCell.setAttribute("data-bytes", stream.latest_size);
-                                sizeCell.innerHTML = formatBytes(stream.latest_size);
-                            }
-                            var mtimeCell = targetRow.querySelector(".file-mtime");
-                            if (mtimeCell) { mtimeCell.innerHTML = stream.latest_mtime; }
-                        } else {
-                            reloadRequired = true;
-                        }
+                    if(stream.is_recording) {
+                        box.classList.add("recording");
+                    } else {
+                        box.classList.remove("recording");
                     }
+
+                    const channelFiles = (data.files && data.files[prefix]) || [];
+                    var badge = box.querySelector(".status-badge");
+                    if (badge) {
+						badge.className = stream.is_recording ? "badge badge-live" : "badge badge-offline";
+						badge.innerHTML = stream.is_recording ? "REC" : "IDLE";
+                    }
+
+                    updateLiveVitals(box, prefix, stream, data.system, data.estimated_remaining_seconds);
+                    updateChannelMetrics(box, stream);
+                    renderActionButton(box, prefix, stream);
+                    renderHistoryList(box, prefix, channelFiles, stream);
                 });
-
-                if (reloadRequired) { location.reload(); }
-            }).catch(e => { console.error("Radar API error:", e); });
-        }, 2000);
+			}).catch(e => {
+				console.error("Radar API error:", e);
+				const connection = document.getElementById("systemConnection");
+				if (connection) connection.innerHTML = '<span style="color:var(--accent-red)">●</span> dashboard connection interrupted';
+			}).finally(() => { statusRequestInFlight = false; });
+		}
+		pollStatus();
+		setInterval(pollStatus, 2000);
     </script>
 </body>
 </html>
 `
-
